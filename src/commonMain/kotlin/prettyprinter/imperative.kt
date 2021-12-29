@@ -54,7 +54,7 @@ interface SimpleSink<in A> {
     }
 }
 
-open class AppendableSink<A>(protected val tgt: Appendable): SimpleSink<A> {
+open class AppendableSink<A>(protected val tgt: Appendable = StringBuilder()): SimpleSink<A> {
     override fun openAnn(ann: A) {
     }
 
@@ -76,10 +76,25 @@ open class AppendableSink<A>(protected val tgt: Appendable): SimpleSink<A> {
     override fun emitIndent(num: Int) {
         this.emit(repeatChar(' ', num))
     }
+
+    fun toString(sds: SDS<A>): String {
+        render(sds)
+        return tgt.toString()
+    }
 }
 
-fun <A> Appendable.renderSds(sds: SDS<A>) {
-    AppendableSink<A>(this).render(sds)
+class DiagnosticSink<A>(tgt: Appendable = StringBuilder()):AppendableSink<A>(tgt) {
+    override fun openAnn(ann: A) {
+        this.emit('[')
+        this.emit(ann.toString())
+        this.emit(']')
+    }
+
+    override fun closeAnn(ann: A) {
+        this.emit("[/")
+        this.emit(ann.toString())
+        this.emit(']')
+    }
 }
 
 class HtmlAnnotation(val tag: String, val attrs: List<Pair<String, String>>)

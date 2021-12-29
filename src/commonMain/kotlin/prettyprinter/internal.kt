@@ -24,16 +24,21 @@ import kotlin.math.min
 
 sealed class Doc<out A> {
     /** Occurs when flattening a line. The layouter will reject this document, choosing a more suitable rendering. */
-    internal object Fail : DocNo()
+    internal object Fail : DocNo() {
+        override fun dump(): String = "Fail"
+    }
 
     /** The empty document; conceptually the unit of [Cat] */
-    internal object Empty : DocNo()
+    internal object Empty : DocNo() {
+        override fun dump(): String = "Empty"
+    }
 
     /** An individual character.  */
     internal class Char<A>(val char: kotlin.Char) : Doc<A>() {
         init {
             require(char != '\n') { "Doc.Char must not be newline; use Line" }
         }
+        override fun dump(): String = "Char($char)"
     }
 
     /** Invariants exists because Text should never overlap Empty, Char or Line */
@@ -44,10 +49,13 @@ sealed class Doc<out A> {
             require(length >= 2) { "Doc.Text must be at least 2 characters; use PChar or Empty" }
             require('\n' !in text) { "Doc.Text must not contain newline; use Line" }
         }
+        override fun dump(): String = "Text($text)"
     }
 
     /** Hard line break. Use helper functions to get line breaks, e.g. [hardline], [softline] and others. */
-    internal object Line : DocNo()
+    internal object Line : DocNo() {
+        override fun dump(): String = "Line"
+    }
 
     /**
      * Lay out the first [Doc], but when flattened (via [group]), prefer
@@ -56,35 +64,74 @@ sealed class Doc<out A> {
      * The layout algorithms work under the assumption that the first
      * alternative is less wide than the flattened second alternative.
      */
-    internal class FlatAlt<A>(val first: Doc<A>, val second: Doc<A>) : Doc<A>()
+    internal class FlatAlt<A>(val first: Doc<A>, val second: Doc<A>) : Doc<A>() {
+        override fun dump(): String = "FlatAlt(${first.dump()}, ${second.dump()})"
+    }
 
     /** Concatenation of two documents */
-    internal class Cat<A>(val first: Doc<A>, val second: Doc<A>) : Doc<A>()
+    internal class Cat<A>(val first: Doc<A>, val second: Doc<A>) : Doc<A>() {
+        override fun dump(): String = "Cat(${first.dump()}, ${second.dump()})"
+    }
 
     /** Document indented by a number of columns */
-    internal class Nest<A>(val indent: Int, val doc: Doc<A>) : Doc<A>()
+    internal class Nest<A>(val indent: Int, val doc: Doc<A>) : Doc<A>() {
+        override fun dump(): String = "Nest($indent, ${doc.dump()})"
+    }
 
     /**
      * Invariant: The first lines of first document should be longer than the
      * first lines of the second one, so the layout algorithm can pick the one
      * that fits best. Used to implement layout alternatives for [group].
      */
-    internal class Union<A>(val first: Doc<A>, val second: Doc<A>) : Doc<A>()
+    internal class Union<A>(val first: Doc<A>, val second: Doc<A>) : Doc<A>() {
+        override fun dump(): String = "Union(${first.dump()}, ${second.dump()})"
+    }
 
     /** React on the current cursor position, see [column] */
-    internal class Column<A>(val react: (Int) -> Doc<A>) : Doc<A>()
+    internal class Column<A>(val react: (Int) -> Doc<A>) : Doc<A>() {
+        override fun dump(): String = "Column(${react})"
+    }
 
     /** React on the document's width, see [pageWidth] */
-    internal class WithPageWidth<A>(val react: (PageWidth) -> Doc<A>) : Doc<A>()
+    internal class WithPageWidth<A>(val react: (PageWidth) -> Doc<A>) : Doc<A>() {
+        override fun dump(): String = "WithPageWidth(${react})"
+    }
 
     /** React on the current nesting level, see [nesting] */
-    internal class Nesting<A>(val react: (Int) -> Doc<A>) : Doc<A>()
+    internal class Nesting<A>(val react: (Int) -> Doc<A>) : Doc<A>() {
+        override fun dump(): String = "Nesting(${react})"
+    }
 
     /**
      * Add an annotation to the enclosed [Doc]. Can be used for example to add
      * styling directives or alt texts that can then be used by the renderer.
      */
-    internal class Annotated<out A>(val ann: A, val doc: Doc<A>) : Doc<A>()
+    internal class Annotated<out A>(val ann: A, val doc: Doc<A>) : Doc<A>() {
+        override fun dump(): String = "Annotated($ann, ${doc.dump()})"
+    }
+
+    /**
+     * Port note: selecting "pretty" per these comments on `instance Show`; this is important so that tests behave.
+     * `([show] doc)` prettyprints document `doc` with [LayoutOptions.default],
+     * ignoring all annotations.
+     * ```
+     * instance Show (Doc ann) where
+     * showsPrec _ doc = renderShowS (layoutPretty defaultLayoutOptions doc)
+     * ```
+     */
+    override fun toString(): String = toStringPretty()
+
+    private fun quickRender(showAnn: Boolean, sds: SDS<A>): String = (if (showAnn) { DiagnosticSink() } else { AppendableSink<A>() }).toString(sds)
+
+    fun toStringCompact(showAnn: Boolean = true): String = quickRender(showAnn, layoutCompact(this))
+
+    fun toStringPretty(pw: PageWidth = PageWidth.default, showAnn: Boolean = true): String = quickRender(showAnn, layoutPretty(LayoutOptions(pw), this))
+
+    fun toStringSmart(pw: PageWidth = PageWidth.default, showAnn: Boolean = true): String =
+        quickRender(showAnn, layoutSmart(LayoutOptions(pw), this))
+
+    /** dump without any layout */
+    abstract fun dump(): String
 }
 
 internal typealias DocNo = Doc<Nothing>
@@ -171,7 +218,7 @@ object Haskell : Prettier {
  *  * [hang] ([nest] relative to current cursor position instead of
  *     current nesting level)
  *  * [align] (set nesting level to current cursor position)
- *  * [indent] (increase indentation on the spot, padding with spaces).
+ *  * [indent] (increase indentation on the spot, padding with [spaces]).
  */
 fun <A> nest(i: Int, x: Doc<A>) = when (i) {
     0 -> x
@@ -205,7 +252,6 @@ val line: DocNo = Doc.FlatAlt(Doc.Line, space)
  *     >>> group doc
  *     lorem ipsumdolor sit amet
  */
-
 val line_: DocNo = Doc.FlatAlt(Doc.Line, Doc.Empty)
 
 /**
@@ -223,9 +269,7 @@ val line_: DocNo = Doc.FlatAlt(Doc.Line, Doc.Empty)
  *     >>> putDocW 10 doc
  *     lorem ipsum
  *     dolor sit amet
- *
  */
-
 val softline: DocNo = Doc.Union(space, Doc.Line)
 
 /**
@@ -324,10 +368,9 @@ sealed class Flatten<out F> {
          * contains a hard [Doc.Line] or [Doc.Fail].
          * See [Group: special flattening] for further explanations.
          */
-
         fun <A> changesUpon(doc: Doc<A>): Flatten<Doc<A>> = when (doc) {
             is Doc.FlatAlt -> Flattened(flatten(doc.second))
-            is Doc.Line -> NeverFlat
+            Doc.Line -> NeverFlat
             is Doc.Union -> Flattened(doc.first)
             is Doc.Nest -> fmap({ Doc.Nest(doc.indent, it) }, changesUpon(doc.doc))
             is Doc.Annotated -> fmap({ Doc.Annotated(doc.ann, it) }, changesUpon(doc.doc))
@@ -345,8 +388,8 @@ sealed class Flatten<out F> {
                     else -> AlreadyFlat
                 }
             }
-            is Doc.Empty, is Doc.Char, is Doc.Text -> AlreadyFlat
-            is Doc.Fail -> NeverFlat
+            Doc.Empty, is Doc.Char, is Doc.Text -> AlreadyFlat
+            Doc.Fail -> NeverFlat
         }
 
         /** Flatten, but don’t report whether anything changes. */
@@ -354,13 +397,13 @@ sealed class Flatten<out F> {
             is Doc.FlatAlt -> flatten(doc.second)
             is Doc.Cat -> flatten(doc.first) + flatten(doc.second)
             is Doc.Nest -> nest(doc.indent, flatten(doc.doc))
-            is Doc.Line -> Doc.Fail
+            Doc.Line -> Doc.Fail
             is Doc.Union -> flatten(doc.first)
             is Doc.Column -> Doc.Column { flatten(doc.react(it)) }
             is Doc.WithPageWidth -> Doc.WithPageWidth { flatten(doc.react(it)) }
             is Doc.Nesting -> Doc.Nesting { flatten(doc.react(it)) }
             is Doc.Annotated -> Doc.Annotated(doc.ann, flatten(doc.doc))
-            is Doc.Fail, is Doc.Empty, is Doc.Char, is Doc.Text -> doc
+            Doc.Fail, Doc.Empty, is Doc.Char, is Doc.Text -> doc
         }
     }
 }
@@ -760,8 +803,8 @@ fun <A> sep(docs: Sequence<Doc<A>>): Doc<A> = group(vsep(docs))
 hcat :: [Doc ann] -> Doc ann
 hcat = concatWith (<>)
  */
-fun <A> hcat(docs: Iterable<Doc<A>>): Doc<A> = concatWith(docs) { a, b -> a + b }
-fun <A> hcat(docs: Sequence<Doc<A>>): Doc<A> = concatWith(docs) { a, b -> a + b }
+fun <A> hcat(docs: Iterable<Doc<A>>): Doc<A> = concatWith(docs, Doc<A>::plus)
+fun <A> hcat(docs: Sequence<Doc<A>>): Doc<A> = concatWith(docs, Doc<A>::plus)
 
 /**
  * | `([vcat] xs)` vertically concatenates the documents `xs`. If it is
@@ -1376,8 +1419,8 @@ data class LayoutOptions(val layoutPageWidth: PageWidth) {
 }
 
 /**
- * | This is the default layout algorithm, and it is used by `show`, `putDoc`
- * and `hPutDoc`. (Port note: see [AppendableSink] and [Appendable.renderSds])
+ * | This is the default layout algorithm, and it is used by `show`, [putDoc]
+ * and `hPutDoc`. (Port note: see [AppendableSink])
  *
  * `[layoutPretty]` commits to rendering something in a certain way if the next
  * element fits the layout constraints; in other words, it has one
