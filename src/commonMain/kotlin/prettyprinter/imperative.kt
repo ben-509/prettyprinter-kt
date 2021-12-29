@@ -1,15 +1,16 @@
-/**
+package prettyprinter
+
+/*
  * The imperative file contains imperative ports of the naive Haskell implementations.
  * Major changes:
  *  1. migrate [SDS] and the layout functions to avoid heavy recursion.
  *  2. take advantage of kotlin IO; no need for fusing
  */
-package prettyprinter
 
 import prettyprinter.render.util.panicUncaughtFail
 
 /**
- * Based on renderS, but modified to suit a Java appendable.
+ * Based on renderS, but modified to suit a Kotlin [Appendable].
  */
 interface SimpleSink<in A> {
     fun openAnn(ann: A)

@@ -1,5 +1,9 @@
 package prettyprinter.render.util
 
+/**
+ * Ported from [Panic.hs](https://hackage.haskell.org/package/prettyprinter-1.7.1/src/src/Prettyprinter/Render/Util/Panic.hs).
+ */
+
 class Panic(msg: String) : Error(msg)
 
 private const val pleaseReport = "Please report this as a bug"

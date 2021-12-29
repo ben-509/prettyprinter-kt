@@ -1,10 +1,10 @@
 @file:Suppress("unused", "SpellCheckingInspection")
 
-/**
- * Port of https://hackage.haskell.org/package/prettyprinter-1.7.1/src/src/Prettyprinter/Symbols/Ascii.hs
- */
-
 package prettyprinter.symbols
+
+/*
+ * Ported from [Ascii.hs](https://hackage.haskell.org/package/prettyprinter-1.7.1/src/src/Prettyprinter/Symbols/Ascii.hs)
+ */
 
 import prettyprinter.Doc
 import prettyprinter.Doc.Char
