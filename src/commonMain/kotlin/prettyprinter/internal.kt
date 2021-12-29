@@ -17,7 +17,6 @@ import prettyprinter.symbols.rbracket
 import prettyprinter.symbols.rbracketSpace
 import prettyprinter.symbols.rparen
 import prettyprinter.symbols.rparenSpace
-import prettyprinter.symbols.space
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
@@ -224,6 +223,9 @@ fun <A> nest(i: Int, x: Doc<A>) = when (i) {
     0 -> x
     else -> Doc.Nest(i, x)
 }
+
+// Javascript is sensitive to loading order.
+val space: DocNo = Doc.Char(' ')
 
 /**
  * The [line] document advances to the next line and indents to the current
