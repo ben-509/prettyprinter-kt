@@ -280,9 +280,17 @@ val hardline: DocNo = Doc.Line
  * use of it.
  */
 fun <A> group(doc: Doc<A>): Doc<A> = when (doc) {
-    is Doc.Union<*> -> doc
-    is Doc.FlatAlt<*> -> TODO()
-    else -> TODO()
+    is Doc.Union -> doc
+    is Doc.FlatAlt -> when(val chg = Flatten.changesUpon(doc.second)) {
+        is Flatten.Flattened -> Doc.Union(chg.doc, doc.first)
+        Flatten.AlreadyFlat -> Doc.Union(doc.second, doc.first)
+        Flatten.NeverFlat -> doc.first
+    }
+    else -> when(val chg = Flatten.changesUpon(doc)) {
+        is Flatten.Flattened -> Doc.Union(chg.doc, doc)
+        Flatten.AlreadyFlat -> doc
+        Flatten.NeverFlat -> doc
+    }
 }
 
 sealed class Flatten<out F> {
@@ -295,63 +303,65 @@ sealed class Flatten<out F> {
     /** The input couldn't be flattened: It contained a [Doc.Line] or [Doc.Fail]. */
     object NeverFlat : Flatten<Nothing>()
 
-    /**
-     * Port note: instance of Functor
-     */
-    fun <X, Y> fmap(f: (X) -> Y, g: Flatten<X>): Flatten<Y> = when (g) {
-        is AlreadyFlat -> AlreadyFlat
-        is NeverFlat -> NeverFlat
-        is Flattened -> Flattened(f(g.doc))
-    }
-
-    /**
-     * Choose the first element of each [Doc.Union], and discard the first field of
-     * all [Doc.FlatAlt]s.
-     *
-     * The result is [Flattened] if the element might change depending on the layout
-     * algorithm (i.e. contains differently renderable sub-documents), and [AlreadyFlat]
-     * if the document is static (e.g. contains only a plain [Doc.Empty] node).
-     * [NeverFlat] is returned when the document cannot be flattened because it
-     * contains a hard [Doc.Line] or [Doc.Fail].
-     * See [Group: special flattening] for further explanations.
-     */
-
-    fun <A> changesUpon(doc: Doc<A>): Flatten<Doc<A>> = when (doc) {
-        is Doc.FlatAlt -> Flattened(flatten(doc.second))
-        is Doc.Line -> NeverFlat
-        is Doc.Union -> Flattened(doc.first)
-        is Doc.Nest -> fmap({ Doc.Nest(doc.indent, it) }, changesUpon(doc.doc))
-        is Doc.Annotated -> fmap({ Doc.Annotated(doc.ann, it) }, changesUpon(doc.doc))
-        is Doc.Column -> Flattened(Doc.Column { flatten(doc.react(it)) })
-        is Doc.Nesting -> Flattened(Doc.Nesting { flatten(doc.react(it)) })
-        is Doc.WithPageWidth -> Flattened(Doc.WithPageWidth { flatten(doc.react(it)) })
-        is Doc.Cat -> {
-            val cuFirst = changesUpon(doc.first)
-            val cuSecond = changesUpon(doc.second)
-            when {
-                cuFirst == NeverFlat || cuSecond == NeverFlat -> NeverFlat
-                cuFirst is Flattened && cuSecond is Flattened -> Flattened(cuFirst.doc + cuSecond.doc)
-                cuFirst is Flattened && cuSecond is AlreadyFlat -> Flattened(cuFirst.doc + doc.second)
-                cuFirst is AlreadyFlat && cuSecond is Flattened -> Flattened(doc.first + cuSecond.doc)
-                else -> AlreadyFlat
-            }
+    companion object {
+        /**
+         * Port note: instance of Functor
+         */
+        fun <X, Y> fmap(f: (X) -> Y, g: Flatten<X>): Flatten<Y> = when (g) {
+            is AlreadyFlat -> AlreadyFlat
+            is NeverFlat -> NeverFlat
+            is Flattened -> Flattened(f(g.doc))
         }
-        is Doc.Empty, is Doc.Char, is Doc.Text -> AlreadyFlat
-        is Doc.Fail -> NeverFlat
-    }
 
-    /** Flatten, but don’t report whether anything changes. */
-    private fun <A> flatten(doc: Doc<A>): Doc<A> = when (doc) {
-        is Doc.FlatAlt -> flatten(doc.second)
-        is Doc.Cat -> flatten(doc.first) + flatten(doc.second)
-        is Doc.Nest -> nest(doc.indent, flatten(doc.doc))
-        is Doc.Line -> Doc.Fail
-        is Doc.Union -> flatten(doc.first)
-        is Doc.Column -> Doc.Column { flatten(doc.react(it)) }
-        is Doc.WithPageWidth -> Doc.WithPageWidth { flatten(doc.react(it)) }
-        is Doc.Nesting -> Doc.Nesting { flatten(doc.react(it)) }
-        is Doc.Annotated -> Doc.Annotated(doc.ann, flatten(doc.doc))
-        is Doc.Fail, is Doc.Empty, is Doc.Char, is Doc.Text -> doc
+        /**
+         * Choose the first element of each [Doc.Union], and discard the first field of
+         * all [Doc.FlatAlt]s.
+         *
+         * The result is [Flattened] if the element might change depending on the layout
+         * algorithm (i.e. contains differently renderable sub-documents), and [AlreadyFlat]
+         * if the document is static (e.g. contains only a plain [Doc.Empty] node).
+         * [NeverFlat] is returned when the document cannot be flattened because it
+         * contains a hard [Doc.Line] or [Doc.Fail].
+         * See [Group: special flattening] for further explanations.
+         */
+
+        fun <A> changesUpon(doc: Doc<A>): Flatten<Doc<A>> = when (doc) {
+            is Doc.FlatAlt -> Flattened(flatten(doc.second))
+            is Doc.Line -> NeverFlat
+            is Doc.Union -> Flattened(doc.first)
+            is Doc.Nest -> fmap({ Doc.Nest(doc.indent, it) }, changesUpon(doc.doc))
+            is Doc.Annotated -> fmap({ Doc.Annotated(doc.ann, it) }, changesUpon(doc.doc))
+            is Doc.Column -> Flattened(Doc.Column { flatten(doc.react(it)) })
+            is Doc.Nesting -> Flattened(Doc.Nesting { flatten(doc.react(it)) })
+            is Doc.WithPageWidth -> Flattened(Doc.WithPageWidth { flatten(doc.react(it)) })
+            is Doc.Cat -> {
+                val cuFirst = changesUpon(doc.first)
+                val cuSecond = changesUpon(doc.second)
+                when {
+                    cuFirst == NeverFlat || cuSecond == NeverFlat -> NeverFlat
+                    cuFirst is Flattened && cuSecond is Flattened -> Flattened(cuFirst.doc + cuSecond.doc)
+                    cuFirst is Flattened && cuSecond is AlreadyFlat -> Flattened(cuFirst.doc + doc.second)
+                    cuFirst is AlreadyFlat && cuSecond is Flattened -> Flattened(doc.first + cuSecond.doc)
+                    else -> AlreadyFlat
+                }
+            }
+            is Doc.Empty, is Doc.Char, is Doc.Text -> AlreadyFlat
+            is Doc.Fail -> NeverFlat
+        }
+
+        /** Flatten, but don’t report whether anything changes. */
+        private fun <A> flatten(doc: Doc<A>): Doc<A> = when (doc) {
+            is Doc.FlatAlt -> flatten(doc.second)
+            is Doc.Cat -> flatten(doc.first) + flatten(doc.second)
+            is Doc.Nest -> nest(doc.indent, flatten(doc.doc))
+            is Doc.Line -> Doc.Fail
+            is Doc.Union -> flatten(doc.first)
+            is Doc.Column -> Doc.Column { flatten(doc.react(it)) }
+            is Doc.WithPageWidth -> Doc.WithPageWidth { flatten(doc.react(it)) }
+            is Doc.Nesting -> Doc.Nesting { flatten(doc.react(it)) }
+            is Doc.Annotated -> Doc.Annotated(doc.ann, flatten(doc.doc))
+            is Doc.Fail, is Doc.Empty, is Doc.Char, is Doc.Text -> doc
+        }
     }
 }
 
