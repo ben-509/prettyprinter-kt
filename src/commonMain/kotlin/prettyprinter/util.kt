@@ -28,6 +28,9 @@ private fun repeatText(cs: CharSequence, s: Int, e: Int): CharSequence = when {
     }
 }
 
+/**
+ * A list of one thing, repeated many times.
+ */
 fun <E> repeatThing(elem: E, n: Int): List<E> = when {
     n <= 0 -> listOf()
     n == 1 -> listOf(elem)
@@ -79,34 +82,17 @@ fun <A, B> foldr(init: B, list: Iterable<A>, func: (A, B) -> B): B {
     return accum
 }
 
-sealed class HList<out E> : AbstractCollection<E>() {
-    abstract val isSingleton: Boolean
+/**
+ * Implements a standard cons list. It'd be very easy to make this a list, a la LinkedList, but it's mostly intended to
+ * be an aid in porting code.
+ */
+sealed class CList<out E>: Iterable<E> {
+    class Cons<E>(val head: E, val tail: CList<E>) : CList<E>()
 
-    class Cons<E>(val head: E, val tail: HList<E>) : HList<E>() {
-        override val size: Int
-            get() = tail.size + 1
-
-        override fun isEmpty(): Boolean {
-            return false
-        }
-
-        override val isSingleton: Boolean
-            get() = tail is Nil
-    }
-
-    object Nil : HList<Nothing>() {
-        override val size: Int = 0
-
-        override fun isEmpty(): Boolean {
-            return true
-        }
-
-        override val isSingleton: Boolean
-            get() = false
-    }
+    object Nil : CList<Nothing>()
 
     override fun iterator(): Iterator<E> {
-        class I(private var node: HList<E>) : Iterator<E> {
+        class I(private var node: CList<E>) : Iterator<E> {
             override fun hasNext(): Boolean = node is Cons
             override fun next(): E {
                 when (val n = node) {

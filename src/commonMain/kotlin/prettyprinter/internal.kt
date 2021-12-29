@@ -2,18 +2,25 @@
 
 /**
  * Porting https://hackage.haskell.org/package/prettyprinter-1.7.1/src/src/Prettyprinter/Internal.hs to Kotlin.
+ * Kotlin doesn't require reexports so this is left in the same place.
  */
 package prettyprinter
 
 import prettyprinter.render.util.panicPeekedEmpty
 import prettyprinter.render.util.panicSkippingInUnannotated
+import prettyprinter.symbols.commaSpace
+import prettyprinter.symbols.lbracket
+import prettyprinter.symbols.lbracketSpace
+import prettyprinter.symbols.lparen
+import prettyprinter.symbols.lparenSpace
+import prettyprinter.symbols.rbracket
+import prettyprinter.symbols.rbracketSpace
+import prettyprinter.symbols.rparen
+import prettyprinter.symbols.rparenSpace
+import prettyprinter.symbols.space
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
-
-private interface Texty {
-    val text: CharSequence
-}
 
 sealed class Doc<out A> {
     /** Occurs when flattening a line. The layouter will reject this document, choosing a more suitable rendering. */
@@ -22,25 +29,24 @@ sealed class Doc<out A> {
     /** The empty document; conceptually the unit of `Cat` */
     internal object Empty : DocNo()
 
-    /** An individual character. Probably a haskellism. */
-    internal class Char<A>(val char: kotlin.Char) : Doc<A>(), Texty {
+    /** An individual character.  */
+    internal class Char<A>(val char: kotlin.Char) : Doc<A>() {
         init {
             require(char != '\n') { "Doc.Char must not be newline; use Line" }
         }
-
-        override val text: CharSequence
-            get() = char.toString()
     }
 
-    /** Invariants are because there is Empty for empty documents, singletons are Char, newlines are Line */
-    internal class Text<A>(override val text: CharSequence) : Doc<A>(), Texty {
+    /** Invariants exists because Text should never overlap Empty, Char or Line */
+    internal class Text<A>(val text: CharSequence) : Doc<A>() {
+        val length: Int
+            get() = text.length
         init {
-            require(text.length >= 2) { "Doc.Text must be at least 2 characters; use PChar or Empty" }
+            require(length >= 2) { "Doc.Text must be at least 2 characters; use PChar or Empty" }
             require('\n' !in text) { "Doc.Text must not contain newline; use Line" }
         }
     }
 
-    /** Hard line break. */
+    /** Hard line break. Use helper functions to get line breaks, e.g. [hardline], [softline] and others. */
     internal object Line : DocNo()
 
     /**
@@ -1118,7 +1124,11 @@ sealed class SDS<out A> {
     internal object SFail : SDS<Nothing>()
     internal object SEmpty : SDS<Nothing>()
     internal class SChar<A>(val char: Char, val rest: SDS<A>) : SDS<A>()
-    internal class SText<A>(val text: CharSequence, val rest: SDS<A>) : SDS<A>()
+    internal class SText<A>(val text: CharSequence, val rest: SDS<A>) : SDS<A>() {
+        val length: Int
+            get() = text.length
+    }
+
     internal class SLine<A>(val indent: Int, val rest: SDS<A>) : SDS<A>()
     internal class SAnnPush<A>(val ann: A, val rest: SDS<A>) : SDS<A>()
     internal class SAnnPop<A>(val rest: SDS<A>) : SDS<A>()
@@ -1168,25 +1178,25 @@ sealed class SDS<out A> {
      */
     fun <B> alterAnnotations(re: (A) -> B?): SDS<B> {
 
-        fun go(stack: HList<Removal>, sds: SDS<A>): SDS<B> = when (sds) {
+        fun go(stack: CList<Removal>, sds: SDS<A>): SDS<B> = when (sds) {
             SFail -> SFail
             SEmpty -> SEmpty
             is SChar -> SChar(sds.char, go(stack, sds.rest))
             is SText -> SText(sds.text, go(stack, sds.rest))
             is SLine -> SLine(sds.indent, go(stack, sds.rest))
             is SAnnPush -> when (val a = re(sds.ann)) {
-                null -> go(HList.Cons(Removal.Remove, stack), sds.rest)
-                else -> SAnnPush(a, go(HList.Cons(Removal.DontRemove, stack), sds.rest))
+                null -> go(CList.Cons(Removal.Remove, stack), sds.rest)
+                else -> SAnnPush(a, go(CList.Cons(Removal.DontRemove, stack), sds.rest))
             }
             is SAnnPop -> when (stack) {
-                HList.Nil -> panicPeekedEmpty()
-                is HList.Cons -> when (stack.head) {
+                CList.Nil -> panicPeekedEmpty()
+                is CList.Cons -> when (stack.head) {
                     Removal.DontRemove -> SAnnPop(go(stack.tail, sds.rest))
                     Removal.Remove -> go(stack.tail, sds.rest)
                 }
             }
         }
-        return go(HList.Nil, this)
+        return go(CList.Nil, this)
     }
 
     /** WhitespaceStrippingState */
@@ -1196,22 +1206,22 @@ sealed class SDS<out A> {
             fun plusOne(): Wss = AnnotationLevel(annLvl + 1)
         }
 
-        class RecordedWhitespace(val withheldLines: HList<Int>, val withheldSpaces: Int) : Wss()
+        class RecordedWhitespace(val withheldLines: CList<Int>, val withheldSpaces: Int) : Wss()
     }
 
     fun removeTrailingWhitespace(): SDS<A> {
-        fun prependEmptyLines(ix: HList<Int>, sds0: SDS<A>): SDS<A> {
+        fun prependEmptyLines(ix: CList<Int>, sds0: SDS<A>): SDS<A> {
             return foldr(sds0, ix) { _, sds -> SLine(0, sds) }
         }
 
-        fun commitWhitespace(withheldLines: HList<Int>, withheldSpaces: Int, sds: SDS<A>): SDS<A> {
+        fun commitWhitespace(withheldLines: CList<Int>, withheldSpaces: Int, sds: SDS<A>): SDS<A> {
             return when (withheldLines) {
-                HList.Nil -> when (withheldSpaces) {
+                CList.Nil -> when (withheldSpaces) {
                     0 -> sds
                     1 -> SChar(' ', sds)
                     else -> SText(repeatChar(' ', withheldSpaces), sds)
                 }
-                is HList.Cons -> prependEmptyLines(withheldLines.tail, SLine(withheldLines.head + withheldSpaces, sds))
+                is CList.Cons -> prependEmptyLines(withheldLines.tail, SLine(withheldLines.head + withheldSpaces, sds))
             }
         }
 
@@ -1225,7 +1235,7 @@ sealed class SDS<out A> {
                 is SAnnPush -> SAnnPush(sds.ann, go(state.plusOne(), sds.rest))
                 is SAnnPop -> when {
                     state.annLvl > 1 -> SAnnPop(go(state.plusOne(), sds.rest))
-                    else -> SAnnPop(go(Wss.RecordedWhitespace(HList.Nil, 0), sds.rest))
+                    else -> SAnnPop(go(Wss.RecordedWhitespace(CList.Nil, 0), sds.rest))
                 }
             }
             is Wss.RecordedWhitespace -> when (sds) {
@@ -1236,11 +1246,11 @@ sealed class SDS<out A> {
                     else -> commitWhitespace(
                         state.withheldLines,
                         state.withheldSpaces,
-                        SChar(sds.char, go(Wss.RecordedWhitespace(HList.Nil, 0), sds.rest))
+                        SChar(sds.char, go(Wss.RecordedWhitespace(CList.Nil, 0), sds.rest))
                     )
                 }
                 is SText -> {
-                    val textLength = sds.text.length
+                    val textLength = sds.length
                     val stripped = sds.text.trimEnd(' ')
                     val trailingLength = textLength - stripped.length
                     val isOnlySpace = stripped.isEmpty()
@@ -1251,14 +1261,14 @@ sealed class SDS<out A> {
                             state.withheldLines, state.withheldSpaces,
                             SText(
                                 stripped, go(
-                                    Wss.RecordedWhitespace(HList.Nil, trailingLength),
+                                    Wss.RecordedWhitespace(CList.Nil, trailingLength),
                                     sds.rest
                                 )
                             )
                         )
                     }
                 }
-                is SLine -> go(Wss.RecordedWhitespace(HList.Cons(sds.indent, state.withheldLines), 0), sds.rest)
+                is SLine -> go(Wss.RecordedWhitespace(CList.Cons(sds.indent, state.withheldLines), 0), sds.rest)
                 is SAnnPush -> commitWhitespace(
                     state.withheldLines, state.withheldSpaces,
                     SAnnPush(sds.ann, go(Wss.AnnotationLevel(1), sds.rest))
@@ -1266,7 +1276,7 @@ sealed class SDS<out A> {
                 is SAnnPop -> panicSkippingInUnannotated()
             }
         }
-        return go(Wss.RecordedWhitespace(HList.Nil, 0), this)
+        return go(Wss.RecordedWhitespace(CList.Nil, 0), this)
     }
 
     /**
@@ -1337,7 +1347,7 @@ sealed class PageWidth {
 
 
 /** The remaining width on the current line. */
-fun remainingWidth(lineLength: Int, ribbonFraction: Double, lineIndent: Int, currentColumn: Int): Int {
+internal fun remainingWidth(lineLength: Int, ribbonFraction: Double, lineIndent: Int, currentColumn: Int): Int {
     val columnsLeftInLine = lineLength - currentColumn
 
     val ribbonWidth = max(0, min(lineLength, floor(lineLength * ribbonFraction).toInt()))
@@ -1376,7 +1386,7 @@ fun <A> layoutPretty(opts: LayoutOptions, doc: Doc<A>): SDS<A> {
             SDS.SFail -> false
             SDS.SEmpty -> true
             is SDS.SChar -> fits(width - 1, sds.rest)
-            is SDS.SText -> fits(width - sds.text.length, sds.rest)
+            is SDS.SText -> fits(width - sds.length, sds.rest)
             is SDS.SLine -> true
             is SDS.SAnnPush -> fits(width, sds.rest)
             is SDS.SAnnPop -> fits(width, sds.rest)
@@ -1456,10 +1466,48 @@ fun <A> layoutPretty(opts: LayoutOptions, doc: Doc<A>): SDS<A> {
 -- By contrast, 'layoutSmart' stops only once it reaches line 4, where the @B@
 -- has the same indentation as the first @A@.
  */
-fun <A> layoutSmart(opts: LayoutOptions, doc: Doc<A>): SDS<A> = TODO()
+fun <A> layoutSmart(opts: LayoutOptions, doc: Doc<A>): SDS<A> = when(val pw = opts.layoutPageWidth) {
+    is PageWidth.AvailablePerLine -> {
+        fun fits(lineIndent: Int, currentColumn: Int, initialIndentY: Int?, sds: SDS<A>): Boolean {
+            val minNestingLevel = min(currentColumn, initialIndentY ?: currentColumn)
+            val availableWidth = remainingWidth(pw.lineLength, pw.ribbonFraction, lineIndent, currentColumn)
 
-/** Layout a document with @Unbounded@ page width. */
-fun <A> layoutUnbounded(doc: Doc<A>): SDS<A> = TODO()
+            fun go(w: Int, sds: SDS<A>): Boolean = w >= 0 && when (sds) {
+                SDS.SFail -> false
+                SDS.SEmpty -> false
+                is SDS.SChar -> go(w - 1, sds.rest)
+                is SDS.SText -> go(w - sds.length, sds.rest)
+                is SDS.SLine -> minNestingLevel >= sds.indent || go(pw.lineLength - sds.indent, sds.rest)
+                is SDS.SAnnPush -> go(w, sds.rest)
+                is SDS.SAnnPop -> go(w, sds.rest)
+            }
+            return go(availableWidth, sds)
+        }
+        layoutWadlerLeijen(pw, doc, ::fits)
+    }
+    PageWidth.Unbounded -> layoutUnbounded(doc)
+}
+
+/**
+ * Layout a document with @Unbounded@ page width.
+ * See the Note [Detecting failure with Unbounded page width].
+ */
+fun <A> layoutUnbounded(doc: Doc<A>): SDS<A> {
+    fun failsOnFirstLine(sds: SDS<A>): Boolean {
+        fun go(sds: SDS<A>): Boolean = when (sds) {
+            SDS.SFail -> true
+            SDS.SEmpty -> false
+            is SDS.SChar -> go(sds.rest)
+            is SDS.SText -> go(sds.rest)
+            is SDS.SLine -> false
+            is SDS.SAnnPush -> go(sds.rest)
+            is SDS.SAnnPop -> go(sds.rest)
+        }
+        return go(sds)
+    }
+
+    return layoutWadlerLeijen(PageWidth.Unbounded, doc) { _, _, _, sdoc -> !failsOnFirstLine(sdoc) }
+}
 
 /** The Wadler/Leijen layout algorithm */
 fun <A> layoutWadlerLeijen(pageWidth: PageWidth, doc: Doc<A>, pred: FittingPredicate<A>): SDS<A> {
@@ -1501,7 +1549,7 @@ fun <A> layoutWadlerLeijen(pageWidth: PageWidth, doc: Doc<A>, pred: FittingPredi
             Doc.Fail -> SDS.SFail
             Doc.Empty -> best(nl, cc, lpl.ds)
             is Doc.Char -> SDS.SChar(d.char, best(nl, cc + 1, lpl.ds))
-            is Doc.Text -> SDS.SText(d.text, best(nl, cc + d.text.length, lpl.ds))
+            is Doc.Text -> SDS.SText(d.text, best(nl, cc + d.length, lpl.ds))
             Doc.Line -> {
                 val x = best(lpl.i, lpl.i, lpl.ds)
                 val i_ = when (x) {
@@ -1529,3 +1577,45 @@ fun <A> layoutWadlerLeijen(pageWidth: PageWidth, doc: Doc<A>, pred: FittingPredi
     return best(0, 0, Lpl.Cons(0, doc, Lpl.Nil))
 }
 
+/**
+-- | @(layoutCompact x)@ lays out the document @x@ without adding any
+-- indentation and without preserving annotations.
+-- Since no \'pretty\' printing is involved, this layouter is very
+-- fast. The resulting output contains fewer characters than a prettyprinted
+-- version and can be used for output that is read by other programs.
+--
+-- >>> let doc = hang 4 (vsep ["lorem", "ipsum", hang 4 (vsep ["dolor", "sit"])])
+-- >>> doc
+-- lorem
+--     ipsum
+--     dolor
+--         sit
+--
+-- >>> let putDocCompact = renderIO System.IO.stdout . layoutCompact
+-- >>> putDocCompact doc
+-- lorem
+-- ipsum
+-- dolor
+-- sit
+ */
+fun <A> layoutCompact(doc: Doc<A>): SDS<A> {
+    fun scan(col: Int, docs: CList<Doc<A>>): SDS<A> = when(docs) {
+        is CList.Nil -> SDS.SEmpty
+        is CList.Cons -> when(val d = docs.head) {
+            Doc.Fail -> SDS.SFail
+            Doc.Empty -> SDS.SEmpty
+            is Doc.Char -> SDS.SChar(d.char, scan(col + 1, docs.tail))
+            is Doc.Text -> SDS.SText(d.text, scan(col + d.length, docs.tail))
+            is Doc.FlatAlt -> scan(col, CList.Cons(d.first, docs.tail))
+            Doc.Line -> SDS.SLine(0, scan(0, docs.tail))
+            is Doc.Cat -> scan(col, CList.Cons(d.first, CList.Cons(d.second, docs.tail)))
+            is Doc.Nest -> scan(col, CList.Cons(d.doc, docs.tail))
+            is Doc.Union -> scan(col, CList.Cons(d.second, docs.tail))
+            is Doc.Column -> scan(col, CList.Cons(d.react(col), docs.tail))
+            is Doc.WithPageWidth -> scan(col, CList.Cons(d.react(PageWidth.Unbounded), docs.tail))
+            is Doc.Nesting -> scan(col, CList.Cons(d.react(0), docs.tail))
+            is Doc.Annotated -> scan(col, CList.Cons(d.doc, docs.tail))
+        }
+    }
+    return scan(0, CList.Cons(doc, CList.Nil))
+}
