@@ -8,15 +8,7 @@ package prettyprinter
 
 import prettyprinter.render.util.panicPeekedEmpty
 import prettyprinter.render.util.panicSkippingInUnannotated
-import prettyprinter.symbols.commaSpace
-import prettyprinter.symbols.lbracket
-import prettyprinter.symbols.lbracketSpace
-import prettyprinter.symbols.lparen
-import prettyprinter.symbols.lparenSpace
-import prettyprinter.symbols.rbracket
-import prettyprinter.symbols.rbracketSpace
-import prettyprinter.symbols.rparen
-import prettyprinter.symbols.rparenSpace
+import prettyprinter.symbols.space // only use for documentation!
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
@@ -111,7 +103,7 @@ sealed class Doc<out A> {
 
     /**
      * Port note: selecting "pretty" per these comments on `instance Show`; this is important so that tests behave.
-     * `([show] doc)` prettyprints document `doc` with [LayoutOptions.default],
+     * `(show doc)` prettyprints document `doc` with [LayoutOptions.default],
      * ignoring all annotations.
      * ```
      * instance Show (Doc ann) where
@@ -131,11 +123,45 @@ sealed class Doc<out A> {
 
     /** dump without any layout */
     abstract fun dump(): String
+
+    /**
+     * These are defined in a companion object to help with loading order. Any internal methods should be reading from
+     * this object rather than depending on a definition in symbols.
+     */
+    internal companion object {
+        val squote: DocNo = Char('\'')
+        val dquote: DocNo = Char('"')
+        val lparen: DocNo = Char('(')
+        val lparenSpace: DocNo = Text("( ")
+        val rparen: DocNo = Char('(')
+        val rparenSpace: DocNo = Text(" )")
+        val langle: DocNo = Char('<')
+        val rangle: DocNo = Char('>')
+        val lbracket: DocNo = Char('[')
+        val lbracketSpace: DocNo = Text("[ ")
+        val rbracket: DocNo = Char(']')
+        val rbracketSpace: DocNo = Text(" ]")
+        val lbrace: DocNo = Char('{')
+        val lbraceSpace: DocNo = Text("{ ")
+        val rbrace: DocNo = Char('}')
+        val rbraceSpace: DocNo = Text(" }")
+        val semi: DocNo = Char(';')
+        val colon: DocNo = Char(':')
+        val comma: DocNo = Char(',')
+        val commaSpace: DocNo = Text(", ")
+        val space: DocNo = Char(' ')
+        val dot: DocNo = Char('.')
+        val slash: DocNo = Char('/')
+        val backslash: DocNo = Char('\\')
+        val equalsChar: DocNo = Char('=')
+        val pipe: DocNo = Char('|')
+    }
 }
 
 internal typealias DocNo = Doc<Nothing>
 
-val emptyDoc: DocNo = Doc.Empty
+val emptyDoc: DocNo
+    get() = Doc.Empty
 
 // Semigroup operations
 /** `doc <> doc` emulated through `doc + doc` */
@@ -155,7 +181,8 @@ fun <A> stimes(n: Int, doc: Doc<A>): Doc<A> = when {
 }
 
 // Monoid definitions
-val mempty: DocNo = Doc.Empty  // emptyDoc, but Haskell defines out of order.
+val mempty: DocNo
+    get() = Doc.Empty  // emptyDoc, but Haskell defines out of order.
 fun <A> mconcat(docs: Iterable<Doc<A>>): Doc<A> = hcat(docs)
 fun <A> mconcat(docs: Sequence<Doc<A>>): Doc<A> = hcat(docs)
 fun <A> mappend(left: Doc<A>, right: Doc<A>): Doc<A> = left + right
@@ -224,9 +251,6 @@ fun <A> nest(i: Int, x: Doc<A>) = when (i) {
     else -> Doc.Nest(i, x)
 }
 
-// Javascript is sensitive to loading order.
-val space: DocNo = Doc.Char(' ')
-
 /**
  * The [line] document advances to the next line and indents to the current
  * nesting level.
@@ -241,7 +265,8 @@ val space: DocNo = Doc.Char(' ')
  *     >>> group doc
  *     lorem ipsum dolor sit amet
  */
-val line: DocNo = Doc.FlatAlt(Doc.Line, space)
+val line: DocNo
+    get() = Doc.FlatAlt(Doc.Line, Doc.space)
 
 /**
  * [line_] is like [line], but behaves like [mempty] if the line break
@@ -254,7 +279,8 @@ val line: DocNo = Doc.FlatAlt(Doc.Line, space)
  *     >>> group doc
  *     lorem ipsumdolor sit amet
  */
-val line_: DocNo = Doc.FlatAlt(Doc.Line, Doc.Empty)
+val line_: DocNo
+    get() = Doc.FlatAlt(Doc.Line, Doc.Empty)
 
 /**
  * [softline] behaves like [space] if the resulting output fits the page,
@@ -272,7 +298,8 @@ val line_: DocNo = Doc.FlatAlt(Doc.Line, Doc.Empty)
  *     lorem ipsum
  *     dolor sit amet
  */
-val softline: DocNo = Doc.Union(space, Doc.Line)
+val softline: DocNo
+    get() = Doc.Union(Doc.space, Doc.Line)
 
 /**
  * [softline_] is like [softline], but behaves like [mempty] if the
@@ -296,7 +323,8 @@ val softline: DocNo = Doc.Union(space, Doc.Line)
  * ```
  */
 
-val softline_: DocNo = Doc.Union(Doc.Empty, Doc.Line)
+val softline_: DocNo
+    get() = Doc.Union(Doc.Empty, Doc.Line)
 
 /**
  * A [hardline] is _always_ laid out as a line break, even when [group]ed or
@@ -312,7 +340,8 @@ val softline_: DocNo = Doc.Union(Doc.Empty, Doc.Line)
  *     lorem ipsum
  *     dolor sit amet
  */
-val hardline: DocNo = Doc.Line
+val hardline: DocNo
+    get() = Doc.Line
 
 /**
  * `group x` tries laying out `x` into a single line by removing the
@@ -613,10 +642,10 @@ private fun <A> encloseSep(leftDelim: Doc<A>, rightDelim: Doc<A>, separator: Doc
  *     , 4000 ]
  */
 fun <A> list(docs: Iterable<Doc<A>>): Doc<A> =
-    group(encloseSep(flatAlt(lbracketSpace, lbracket), flatAlt(rbracketSpace, rbracket), commaSpace, docs))
+    group(encloseSep(flatAlt(Doc.lbracketSpace, Doc.lbracket), flatAlt(Doc.rbracketSpace, Doc.rbracket), Doc.commaSpace, docs))
 
 fun <A> list(docs: Sequence<Doc<A>>): Doc<A> =
-    group(encloseSep(flatAlt(lbracketSpace, lbracket), flatAlt(rbracketSpace, rbracket), commaSpace, docs))
+    group(encloseSep(flatAlt(Doc.lbracketSpace, Doc.lbracket), flatAlt(Doc.rbracketSpace, Doc.rbracket), Doc.commaSpace, docs))
 
 
 /**
@@ -636,10 +665,10 @@ fun <A> list(docs: Sequence<Doc<A>>): Doc<A> =
  */
 
 fun <A> tupled(docs: Iterable<Doc<A>>): Doc<A> =
-    group(encloseSep(flatAlt(lparenSpace, lparen), flatAlt(rparenSpace, rparen), commaSpace, docs))
+    group(encloseSep(flatAlt(Doc.lparenSpace, Doc.lparen), flatAlt(Doc.rparenSpace, Doc.rparen), Doc.commaSpace, docs))
 
 fun <A> tupled(docs: Sequence<Doc<A>>): Doc<A> =
-    group(encloseSep(flatAlt(lparenSpace, lparen), flatAlt(rparenSpace, rparen), commaSpace, docs))
+    group(encloseSep(flatAlt(Doc.lparenSpace, Doc.lparen), flatAlt(Doc.rparenSpace, Doc.rparen), Doc.commaSpace, docs))
 
 /**
  * `x <+> y` concatenates document `x` and `y` with a `space` in
@@ -652,7 +681,7 @@ fun <A> tupled(docs: Sequence<Doc<A>>): Doc<A> =
  * x '<+>' y = x '<>' [space] '<>' y
  * ```
  */
-infix fun <A> Doc<A>.spc(right: Doc<A>): Doc<A> = this + space + right
+infix fun <A> Doc<A>.spc(right: Doc<A>): Doc<A> = this + Doc.space + right
 
 /**
  * Concatenate all documents element-wise with a binary function.
@@ -1020,7 +1049,7 @@ fun <A> fillBreak(atLeastWidth: Int, doc: Doc<A>): Doc<A> = width(doc) { curWidt
  */
 fun spaces(n: Int): DocNo = when {
     n <= 0 -> Doc.Empty
-    n == 1 -> space
+    n == 1 -> Doc.space
     else -> Doc.Text(repeatChar(' ', n))
 }
 

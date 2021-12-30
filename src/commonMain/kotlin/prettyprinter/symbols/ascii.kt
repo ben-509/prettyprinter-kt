@@ -4,6 +4,7 @@ package prettyprinter.symbols
 
 /*
  * Ported from [Ascii.hs](https://hackage.haskell.org/package/prettyprinter-1.7.1/src/src/Prettyprinter/Symbols/Ascii.hs)
+ * Internal functions should not use any `val`s defined here, instead define and use them from the Doc companion object.
  */
 
 import prettyprinter.Doc
@@ -11,36 +12,29 @@ import prettyprinter.Doc.Char
 import prettyprinter.DocNo
 import prettyprinter.enclose
 
-fun <A> sqoutes(doc: Doc<A>): Doc<A> = enclose(squote, squote, doc)
-fun <A> dqoutes(doc: Doc<A>): Doc<A> = enclose(dquote, dquote, doc)
-fun <A> parens(doc: Doc<A>): Doc<A> = enclose(lparen, rparen, doc)
-fun <A> angles(doc: Doc<A>): Doc<A> = enclose(langle, rangle, doc)
-fun <A> brackets(doc: Doc<A>): Doc<A> = enclose(lbracket, rbracket, doc)
-fun <A> braces(doc: Doc<A>): Doc<A> = enclose(lbrace, rbrace, doc)
+fun <A> sqoutes(doc: Doc<A>): Doc<A> = enclose(Doc.squote, Doc.squote, doc)
+fun <A> dqoutes(doc: Doc<A>): Doc<A> = enclose(Doc.dquote, Doc.dquote, doc)
+fun <A> parens(doc: Doc<A>): Doc<A> = enclose(Doc.lparen, Doc.rparen, doc)
+fun <A> angles(doc: Doc<A>): Doc<A> = enclose(Doc.langle, Doc.rangle, doc)
+fun <A> brackets(doc: Doc<A>): Doc<A> = enclose(Doc.lbracket, Doc.rbracket, doc)
+fun <A> braces(doc: Doc<A>): Doc<A> = enclose(Doc.lbrace, Doc.rbrace, doc)
 
-val squote: DocNo = Char('\'')
-val dquote: DocNo = Char('"')
-val lparen: DocNo = Char('(')
-val lparenSpace: DocNo = Doc.Text("( ")
-val rparen: DocNo = Char('(')
-val rparenSpace: DocNo = Doc.Text(" )")
-val langle: DocNo = Char('<')
-val rangle: DocNo = Char('>')
-val lbracket: DocNo = Char('[')
-val lbracketSpace: DocNo = Doc.Text("[ ")
-val rbracket: DocNo = Char(']')
-val rbracketSpace: DocNo = Doc.Text(" ]")
-val lbrace: DocNo = Char('{')
-val lbraceSpace: DocNo = Doc.Text("{ ")
-val rbrace: DocNo = Char('}')
-val rbraceSpace: DocNo = Doc.Text(" }")
-val semi: DocNo = Char(';')
-val colon: DocNo = Char(':')
-val comma: DocNo = Char(',')
-val commaSpace: DocNo = Doc.Text(", ")
-// val space: DocNo = Char(' ')
-val dot: DocNo = Char('.')
-val slash: DocNo = Char('/')
-val backslash: DocNo = Char('\\')
-val equals: DocNo = Char('=')
-val pipe: DocNo = Char('|')
+val squote: DocNo = Doc.squote
+val dquote: DocNo = Doc.dquote
+val lparen: DocNo = Doc.lparen
+val rparen: DocNo = Doc.rparen
+val langle: DocNo = Doc.langle
+val rangle: DocNo = Doc.rangle
+val lbracket: DocNo = Doc.lbracket
+val rbracket: DocNo = Doc.rbracket
+val lbrace: DocNo = Doc.lbrace
+val rbrace: DocNo = Doc.rbrace
+val semi: DocNo = Doc.semi
+val colon: DocNo = Doc.colon
+val comma: DocNo = Doc.comma
+val space: DocNo = Doc.space
+val dot: DocNo = Doc.dot
+val slash: DocNo = Doc.slash
+val backslash: DocNo = Doc.backslash
+val equals: DocNo = Doc.equalsChar
+val pipe: DocNo = Doc.pipe

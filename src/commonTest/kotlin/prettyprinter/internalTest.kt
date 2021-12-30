@@ -15,7 +15,7 @@ fun ll(vararg lines: String): String {
  * test and commentary.
  */
 @Suppress("SpellCheckingInspection")
-class Tests {
+class InternalTests {
     @Test
     fun nestDt1() {
         val actual: Doc<Nothing> = vsep(

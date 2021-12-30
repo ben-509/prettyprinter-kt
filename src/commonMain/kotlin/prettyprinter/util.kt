@@ -10,7 +10,7 @@ package prettyprinter
  *
 -- Split an input into word-sized [Doc]s.
 --
--- >>> putDoc (tupled (words "Lorem ipsum dolor"))
+-- >>> putDoc ([tupled] (words "Lorem ipsum dolor"))
 -- (Lorem, ipsum, dolor)
  */
 fun words(text: String): Iterable<DocNo> = text.split(' ').map { text(it) }
@@ -51,28 +51,35 @@ fun reflow(text: String): DocNo = fillSep(words(text))
  *
  * Port note: our tests just write to a string. Also, we show annotations, which doesn't generally matter as the tests
  * rarely have any.
+ * TODO: make this dump to stdout?
  */
 fun <A> putDocW(w: Int, doc: Doc<A>): String = doc.toStringPretty(PageWidth.AvailablePerLine(w, 1.0))
 
-private fun viaCharArray(cs: CharSequence): String {
-    val n = cs.length
-    val ca = CharArray(n)
-    for(i in 0 until n) {
-        ca[i] = cs[i]
-    }
-    return ca.concatToString()
-}
+/**
+-- `([putDoc] doc)` prettyprints document `doc` to standard output. Uses the
+-- [LayoutOptions.default].
+--
+--     >>> putDoc ("hello" <+> "world")
+--     hello world
+--
+-- ```
+-- 'putDoc' = 'hPutDoc' 'stdout'
+-- ```
+ * Port note: our tests just write to a string. Also, we show annotations, which doesn't generally matter as the tests
+ * rarely have any.
+ * TODO: make this dump to stdout?
+ */
+fun <A> putDoc(doc: Doc<A>): String = doc.toStringPretty()
 
 /**
  * A [CharSequence] of a repeating character. Mostly useful for indentation.
  */
 fun repeatChar(c: Char, n: Int): CharSequence = when {
     n <= 0 -> ""
-    else -> object : CharSequence {
+    else -> object : ComputedCharSequence() {
         override val length: Int = n
         override fun get(index: Int): Char = c
         override fun subSequence(startIndex: Int, endIndex: Int): CharSequence = repeatChar(c, endIndex - startIndex)
-        override fun toString(): String = viaCharArray(this)
     }
 }
 
@@ -90,12 +97,11 @@ private fun repeatText(cs: CharSequence, s: Int, e: Int): CharSequence = when {
     cs.isEmpty() -> ""
     cs.length == 1 -> repeatChar(cs[0], e - s)
     e - s <= 0 -> ""
-    else -> object : CharSequence {
+    else -> object : ComputedCharSequence() {
         override val length: Int = e - s
         override fun get(index: Int): Char = cs[(index + s) % cs.length]
         override fun subSequence(startIndex: Int, endIndex: Int): CharSequence =
             repeatText(cs, s + startIndex, s + endIndex)
-        override fun toString(): String = viaCharArray(this)
     }
 }
 
@@ -185,5 +191,20 @@ sealed class CList<out E>: Iterable<E> {
             }
         }
         return I(this)
+    }
+}
+
+/**
+ *  It's not in the interface, but most consumers assume that at least [toString] works.
+ *  We don't depend on equals / hashCode working.
+ */
+private abstract class ComputedCharSequence: CharSequence {
+    override fun toString(): String {
+        val n = this.length
+        val ca = CharArray(n)
+        for (i in 0 until n) {
+            ca[i] = this[i]
+        }
+        return ca.concatToString()
     }
 }
