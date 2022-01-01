@@ -8,68 +8,74 @@ package prettyprinter
 
 /**
  *
--- Split an input into word-sized [Doc]s.
---
--- >>> putDoc ([tupled] (words "Lorem ipsum dolor"))
--- (Lorem, ipsum, dolor)
+ * Split an input into word-sized [Doc]s.
+ *
+ *     >>> putDoc ([tupled] (words "Lorem ipsum dolor"))
+ *     (Lorem, ipsum, dolor)
  */
-fun words(text: String): Iterable<DocNo> = text.split(' ').map { text(it) }
+fun words(text: String): List<DocNo> = text.split(' ').map { text(it) }
 
 /**
--- | Insert soft linebreaks between words, so that text is broken into multiple
--- lines when it exceeds the available width.
---
--- >>> putDocW 32 (reflow "Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.")
--- Lorem ipsum dolor sit amet,
--- consectetur adipisicing elit,
--- sed do eiusmod tempor incididunt
--- ut labore et dolore magna
--- aliqua.
---
--- ```
--- [reflow] = [fillSep] . [words]
--- ```
-reflow :: Text -> Doc ann
-reflow = fillSep . words
-*/
+ * Create a list of Docs from strings.
+ */
+fun texts(vararg text: String): List<DocNo> = text.map { text(it) }
+
+/**
+ * Insert soft linebreaks between words, so that text is broken into multiple
+ * lines when it exceeds the available width.
+ *
+ *     >>> putDocW 32 (reflow "Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.")
+ *     Lorem ipsum dolor sit amet,
+ *     consectetur adipisicing elit,
+ *     sed do eiusmod tempor incididunt
+ *     ut labore et dolore magna
+ *     aliqua.
+ *
+ * ```
+ * [reflow] = [fillSep] . [words]
+ * ```
+ */
 fun reflow(text: String): DocNo = fillSep(words(text))
 
 /**
--- | Render a document with a certain width. Useful for quick-and-dirty testing
--- of layout behaviour. Used heavily in the doctests of this package, for
--- example.
---
--- >>> let doc = reflow "Lorem ipsum dolor sit amet, consectetur adipisicing elit"
--- >>> putDocW 20 doc
--- Lorem ipsum dolor
--- sit amet,
--- consectetur
--- adipisicing elit
--- >>> putDocW 30 doc
--- Lorem ipsum dolor sit amet,
--- consectetur adipisicing elit
+ * Render a document with a certain width. Useful for quick-and-dirty testing
+ * of layout behaviour. Used heavily in the doctests of this package, for
+ * example.
  *
- * Port note: our tests just write to a string. Also, we show annotations, which doesn't generally matter as the tests
- * rarely have any.
- * TODO: make this dump to stdout?
+ *     >>> let doc = reflow "Lorem ipsum dolor sit amet, consectetur adipisicing elit"
+ *     >>> putDocW 20 doc
+ *     Lorem ipsum dolor
+ *     sit amet,
+ *     consectetur
+ *     adipisicing elit
+ *     >>> putDocW 30 doc
+ *     Lorem ipsum dolor sit amet,
+ *     consectetur adipisicing elit
+ *
+ * Port note: our tests use [Doc.toStringPretty]. This also takes an [Appendable] rather than an IO stream.
  */
-fun <A> putDocW(w: Int, doc: Doc<A>): String = doc.toStringPretty(PageWidth.AvailablePerLine(w, 1.0))
+fun <A> putDocW(w: Int, doc: Doc<A>, app: Appendable) {
+    val sds = layoutPretty(LayoutOptions(PageWidth.AvailablePerLine(w, 1.0)), doc)
+    AppendableSink<A>(tgt = app).render(sds)
+}
 
 /**
--- `([putDoc] doc)` prettyprints document `doc` to standard output. Uses the
--- [LayoutOptions.default].
---
---     >>> putDoc ("hello" <+> "world")
---     hello world
---
--- ```
--- 'putDoc' = 'hPutDoc' 'stdout'
--- ```
- * Port note: our tests just write to a string. Also, we show annotations, which doesn't generally matter as the tests
- * rarely have any.
- * TODO: make this dump to stdout?
+ * `([putDoc] doc)` prettyprints document `doc` to standard output. Uses the
+ * [LayoutOptions.default].
+ *
+ *     >>> putDoc ("hello" <+> "world")
+ *     hello world
+ *
+ * ```
+ * 'putDoc' = 'hPutDoc' 'stdout'
+ * ```
+ *
+ * Port note: our tests use [Doc.toStringPretty]. This also takes an [Appendable] rather than an IO stream.
  */
-fun <A> putDoc(doc: Doc<A>): String = doc.toStringPretty()
+fun <A> putDoc(doc: Doc<A>, app: Appendable) {
+    val sds = layoutPretty(LayoutOptions(PageWidth.default), doc)
+    AppendableSink<A>(tgt = app).render(sds)
+}
 
 /**
  * A [CharSequence] of a repeating character. Mostly useful for indentation.
@@ -117,6 +123,7 @@ fun <E> repeatThing(elem: E, n: Int): List<E> = when {
         override fun contains(element: E): Boolean {
             return elem == element
         }
+
         override fun subList(fromIndex: Int, toIndex: Int): List<E> {
             return repeatThing(elem, toIndex - fromIndex)
         }
@@ -124,30 +131,36 @@ fun <E> repeatThing(elem: E, n: Int): List<E> = when {
 }
 
 /**
- * Applies a mapping function to everything but the last element. That also means the mapping function can't change
- * types.
+ * Applies a position aware mapping function that knows when it's at the extremes of a list.
  */
-fun <E> mapAllExceptLast(seq: Sequence<E>, func: (E) -> E): Sequence<E> = object : Sequence<E> {
-    override fun iterator(): Iterator<E> = mapAllExceptLast(seq.iterator(), func)
+fun <E, F> Sequence<E>.mapWhere(func: (Where, E) -> F): Sequence<F> =
+    Sequence { this@mapWhere.iterator().mapWhere(func) }
+
+fun <E, F> Iterable<E>.mapWhere(func: (Where, E) -> F): Iterable<F> =
+    Iterable { this@mapWhere.iterator().mapWhere(func) }
+
+enum class Where {
+    FIRST, MIDDLE, LAST, ONLY
 }
 
-fun <E> mapAllExceptLast(iterable: Iterable<E>, func: (E) -> E): Iterable<E> = object : Iterable<E> {
-    override fun iterator(): Iterator<E> = mapAllExceptLast(iterable.iterator(), func)
-}
-
-fun <E> mapAllExceptLast(iter: Iterator<E>, func: (E) -> E): Iterator<E> =
-    object : Iterator<E> {
+fun <E, F> Iterator<E>.mapWhere(func: (Where, E) -> F): Iterator<F> =
+    object : Iterator<F> {
+        var first = true
         override fun hasNext(): Boolean {
-            return iter.hasNext()
+            return this@mapWhere.hasNext()
         }
 
-        override fun next(): E {
-            val elem = iter.next()
-            return if (iter.hasNext()) {
-                func(elem)
-            } else {
-                elem
+        override fun next(): F {
+            val elem = this@mapWhere.next()
+            val last = !this@mapWhere.hasNext()
+            val where = when {
+                first && last -> Where.ONLY
+                first -> Where.FIRST
+                last -> Where.LAST
+                else -> Where.MIDDLE
             }
+            first = false
+            return func(where, elem)
         }
     }
 
@@ -172,7 +185,7 @@ fun <E, A> foldr(init: A, list: Iterable<E>, func: (E, A) -> A): A {
  * Implements a standard cons list. It'd be very easy to make this a list, a la LinkedList, but it's mostly intended to
  * be an aid in porting code.
  */
-sealed class CList<out E>: Iterable<E> {
+sealed class CList<out E> : Iterable<E> {
     class Cons<E>(val head: E, val tail: CList<E>) : CList<E>()
 
     object Nil : CList<Nothing>()
@@ -198,7 +211,7 @@ sealed class CList<out E>: Iterable<E> {
  *  It's not in the interface, but most consumers assume that at least [toString] works.
  *  We don't depend on equals / hashCode working.
  */
-private abstract class ComputedCharSequence: CharSequence {
+private abstract class ComputedCharSequence : CharSequence {
     override fun toString(): String {
         val n = this.length
         val ca = CharArray(n)

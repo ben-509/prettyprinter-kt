@@ -29,6 +29,7 @@ sealed class Doc<out A> {
         init {
             require(char != '\n') { "Doc.Char must not be newline; use Line" }
         }
+
         override fun dump(): String = "Char($char)"
     }
 
@@ -36,10 +37,12 @@ sealed class Doc<out A> {
     internal class Text<A>(val text: CharSequence) : Doc<A>() {
         val length: Int
             get() = text.length
+
         init {
             require(length >= 2) { "Doc.Text must be at least 2 characters; use PChar or Empty" }
             require('\n' !in text) { "Doc.Text must not contain newline; use Line" }
         }
+
         override fun dump(): String = "Text($text)"
     }
 
@@ -112,14 +115,28 @@ sealed class Doc<out A> {
      */
     override fun toString(): String = toStringPretty()
 
-    private fun quickRender(showAnn: Boolean, sds: SDS<A>): String = (if (showAnn) { DiagnosticSink() } else { AppendableSink<A>() }).toString(sds)
+    private fun quickRender(showAnn: Boolean, sds: SDS<A>): String =
+        (if (showAnn) {
+            DiagnosticSink()
+        } else {
+            AppendableSink<A>()
+        }).toString(sds)
 
     fun toStringCompact(showAnn: Boolean = true): String = quickRender(showAnn, layoutCompact(this))
 
-    fun toStringPretty(pw: PageWidth = PageWidth.default, showAnn: Boolean = true): String = quickRender(showAnn, layoutPretty(LayoutOptions(pw), this))
+    /** Replaces most uses of [putDoc] in tests. */
+    fun toStringPretty(pw: PageWidth = PageWidth.default, showAnn: Boolean = true): String =
+        quickRender(showAnn, layoutPretty(LayoutOptions(pw), this))
+
+    /** Replaces most uses of [putDocW] in tests. */
+    fun toStringPretty(width: Int, ribbon: Double = 1.0, showAnn: Boolean = true): String =
+        toStringPretty(PageWidth.AvailablePerLine(width, ribbon), showAnn = showAnn)
 
     fun toStringSmart(pw: PageWidth = PageWidth.default, showAnn: Boolean = true): String =
         quickRender(showAnn, layoutSmart(LayoutOptions(pw), this))
+
+    fun toStringSmart(width: Int, ribbon: Double = 1.0, showAnn: Boolean = true): String =
+        toStringSmart(PageWidth.AvailablePerLine(width, ribbon), showAnn = showAnn)
 
     /** dump without any layout */
     abstract fun dump(): String
@@ -133,7 +150,7 @@ sealed class Doc<out A> {
         val dquote: DocNo = Char('"')
         val lparen: DocNo = Char('(')
         val lparenSpace: DocNo = Text("( ")
-        val rparen: DocNo = Char('(')
+        val rparen: DocNo = Char(')')
         val rparenSpace: DocNo = Text(" )")
         val langle: DocNo = Char('<')
         val rangle: DocNo = Char('>')
@@ -164,8 +181,20 @@ val emptyDoc: DocNo
     get() = Doc.Empty
 
 // Semigroup operations
-/** `doc <> doc` emulated through `doc + doc` */
-operator fun <A> Doc<A>.plus(doc: Doc<A>): Doc<A> = Doc.Cat(this, doc)
+/**
+ * `doc <> doc` emulated through `doc cat doc`
+ *
+ * Port note: Unfortunately, there's a `cat` function that does something completely different.
+ * I'm not sure what to call this, since it's what it does, Cat is the exact same constructor and, per the definition
+ * of [Semigroups](https://hackage.haskell.org/package/base-4.15.0.0/docs/Data-Semigroup.html), `<>` is concatenation.
+ * (Those docs don't name `<>` directly, but you can infer it from the function `sconcat`.)
+ *
+ * I had been overloading plus because of the Kotlin relation to string concatenation, but that seemed confusing
+ * with `<+>`.
+ *
+ * @see [spc] the infix function replacing `<+>`
+ */
+infix fun <A> Doc<A>.cat(right: Doc<A>): Doc<A> = Doc.Cat(this, right)
 
 fun <A> sconcat(docs: Iterable<Doc<A>>): Doc<A> = hcat(docs)
 fun <A> sconcat(docs: Sequence<Doc<A>>): Doc<A> = hcat(docs)
@@ -183,9 +212,10 @@ fun <A> stimes(n: Int, doc: Doc<A>): Doc<A> = when {
 // Monoid definitions
 val mempty: DocNo
     get() = Doc.Empty  // emptyDoc, but Haskell defines out of order.
+
 fun <A> mconcat(docs: Iterable<Doc<A>>): Doc<A> = hcat(docs)
 fun <A> mconcat(docs: Sequence<Doc<A>>): Doc<A> = hcat(docs)
-fun <A> mappend(left: Doc<A>, right: Doc<A>): Doc<A> = left + right
+fun <A> mappend(left: Doc<A>, right: Doc<A>): Doc<A> = left cat right
 
 /**
  * Convert a string to a [Doc]ument, treating newlines as [hardline]s.
@@ -356,12 +386,12 @@ val hardline: DocNo
  */
 fun <A> group(doc: Doc<A>): Doc<A> = when (doc) {
     is Doc.Union -> doc
-    is Doc.FlatAlt -> when(val chg = Flatten.changesUpon(doc.second)) {
+    is Doc.FlatAlt -> when (val chg = Flatten.changesUpon(doc.second)) {
         is Flatten.Flattened -> Doc.Union(chg.doc, doc.first)
         Flatten.AlreadyFlat -> Doc.Union(doc.second, doc.first)
         Flatten.NeverFlat -> doc.first
     }
-    else -> when(val chg = Flatten.changesUpon(doc)) {
+    else -> when (val chg = Flatten.changesUpon(doc)) {
         is Flatten.Flattened -> Doc.Union(chg.doc, doc)
         Flatten.AlreadyFlat -> doc
         Flatten.NeverFlat -> doc
@@ -413,9 +443,9 @@ sealed class Flatten<out F> {
                 val cuSecond = changesUpon(doc.second)
                 when {
                     cuFirst == NeverFlat || cuSecond == NeverFlat -> NeverFlat
-                    cuFirst is Flattened && cuSecond is Flattened -> Flattened(cuFirst.doc + cuSecond.doc)
-                    cuFirst is Flattened && cuSecond is AlreadyFlat -> Flattened(cuFirst.doc + doc.second)
-                    cuFirst is AlreadyFlat && cuSecond is Flattened -> Flattened(doc.first + cuSecond.doc)
+                    cuFirst is Flattened && cuSecond is Flattened -> Flattened(Doc.Cat(cuFirst.doc, cuSecond.doc))
+                    cuFirst is Flattened && cuSecond is AlreadyFlat -> Flattened(Doc.Cat(cuFirst.doc, doc.second))
+                    cuFirst is AlreadyFlat && cuSecond is Flattened -> Flattened(Doc.Cat(doc.first, cuSecond.doc))
                     else -> AlreadyFlat
                 }
             }
@@ -426,7 +456,7 @@ sealed class Flatten<out F> {
         /** Flatten, but don’t report whether anything changes. */
         private fun <A> flatten(doc: Doc<A>): Doc<A> = when (doc) {
             is Doc.FlatAlt -> flatten(doc.second)
-            is Doc.Cat -> flatten(doc.first) + flatten(doc.second)
+            is Doc.Cat -> flatten(doc.first) cat flatten(doc.second)
             is Doc.Nest -> nest(doc.indent, flatten(doc.doc))
             Doc.Line -> Doc.Fail
             is Doc.Union -> flatten(doc.first)
@@ -578,7 +608,7 @@ indent
 -> Doc ann
 indent i d = hang i (spaces i <> d)
  */
-fun <A> indent(i: Int, d: Doc<A>): Doc<A> = hang(i, spaces(i) + d)
+fun <A> indent(i: Int, d: Doc<A>): Doc<A> = hang(i, spaces(i) cat d)
 
 /**
  * `encloseSep l r sep xs` concatenates the documents `xs` separated by
@@ -605,26 +635,23 @@ fun <A> indent(i: Int, d: Doc<A>): Doc<A> = hang(i, spaces(i) + d)
  * For putting separators at the end of entries instead, have a look at
  * [punctuate].
  */
-fun <A> encloseSep(leftDelim: Doc<A>, rightDelim: Doc<A>, separator: Doc<A>, inputs: Iterable<Doc<A>>): Doc<A> =
-    encloseSep(leftDelim, rightDelim, separator, inputs.iterator())
 
-fun <A> encloseSep(leftDelim: Doc<A>, rightDelim: Doc<A>, separator: Doc<A>, inputs: Sequence<Doc<A>>): Doc<A> =
-    encloseSep(leftDelim, rightDelim, separator, inputs.iterator())
-
-private fun <A> encloseSep(leftDelim: Doc<A>, rightDelim: Doc<A>, separator: Doc<A>, inputs: Iterator<Doc<A>>): Doc<A> {
-    var sep = leftDelim
-    var node: Doc<A> = Doc.Empty
-    for (doc in inputs) {
-        node = node + sep + doc
-        sep = separator
-    }
-    return if (node == Doc.Empty) {
-        leftDelim + rightDelim
+fun <A> encloseSep(leftDelim: Doc<A>, rightDelim: Doc<A>, separator: Doc<A>, inputs: Iterable<Doc<A>>): Doc<A> {
+    val docs = inputs.mapWhere { where, doc ->
+        when (where) {
+            Where.FIRST, Where.ONLY -> leftDelim cat doc
+            Where.MIDDLE, Where.LAST -> separator cat doc
+        }
+    }.toList()
+    return if (docs.isEmpty()) {
+        leftDelim cat rightDelim
     } else {
-        node + rightDelim
+        cat(docs) cat rightDelim
     }
 }
 
+fun <A> encloseSep(leftDelim: Doc<A>, rightDelim: Doc<A>, separator: Doc<A>, inputs: Sequence<Doc<A>>): Doc<A> =
+    encloseSep(leftDelim, rightDelim, separator, inputs.asIterable())
 
 /**
  * Haskell-inspired variant of [encloseSep] with braces and comma as
@@ -642,14 +669,28 @@ private fun <A> encloseSep(leftDelim: Doc<A>, rightDelim: Doc<A>, separator: Doc
  *     , 4000 ]
  */
 fun <A> list(docs: Iterable<Doc<A>>): Doc<A> =
-    group(encloseSep(flatAlt(Doc.lbracketSpace, Doc.lbracket), flatAlt(Doc.rbracketSpace, Doc.rbracket), Doc.commaSpace, docs))
+    group(
+        encloseSep(
+            flatAlt(Doc.lbracketSpace, Doc.lbracket),
+            flatAlt(Doc.rbracketSpace, Doc.rbracket),
+            Doc.commaSpace,
+            docs
+        )
+    )
 
 fun <A> list(docs: Sequence<Doc<A>>): Doc<A> =
-    group(encloseSep(flatAlt(Doc.lbracketSpace, Doc.lbracket), flatAlt(Doc.rbracketSpace, Doc.rbracket), Doc.commaSpace, docs))
+    group(
+        encloseSep(
+            flatAlt(Doc.lbracketSpace, Doc.lbracket),
+            flatAlt(Doc.rbracketSpace, Doc.rbracket),
+            Doc.commaSpace,
+            docs
+        )
+    )
 
 
 /**
- * | Haskell-inspired variant of [encloseSep] with parentheses and comma as
+ * Haskell-inspired variant of [encloseSep] with parentheses and comma as
  * separator.
  *
  *     >>> let doc = tupled (map pretty [1,20,300,4000])
@@ -681,7 +722,7 @@ fun <A> tupled(docs: Sequence<Doc<A>>): Doc<A> =
  * x '<+>' y = x '<>' [space] '<>' y
  * ```
  */
-infix fun <A> Doc<A>.spc(right: Doc<A>): Doc<A> = this + Doc.space + right
+infix fun <A> Doc<A>.spc(right: Doc<A>): Doc<A> = this cat Doc.space cat right
 
 /**
  * Concatenate all documents element-wise with a binary function.
@@ -766,8 +807,8 @@ fun <A> hsep(docs: Sequence<Doc<A>>): Doc<A> = concatWith(docs) { a, b -> a spc 
  * Since [group]ing a [vsep] is rather common, [sep] is a built-in for doing
  * that.
  */
-fun <A> vsep(docs: Iterable<Doc<A>>): Doc<A> = concatWith(docs) { x, y -> x + line + y }
-fun <A> vsep(docs: Sequence<Doc<A>>): Doc<A> = concatWith(docs) { x, y -> x + line + y }
+fun <A> vsep(docs: Iterable<Doc<A>>): Doc<A> = concatWith(docs) { x, y -> x cat line cat y }
+fun <A> vsep(docs: Sequence<Doc<A>>): Doc<A> = concatWith(docs) { x, y -> x cat line cat y }
 
 
 /**
@@ -793,8 +834,8 @@ fun <A> vsep(docs: Sequence<Doc<A>>): Doc<A> = concatWith(docs) { x, y -> x + li
 fillSep :: [Doc ann] -> Doc ann
 fillSep = concatWith (\x y -> x <> softline <> y)
  */
-fun <A> fillSep(docs: Iterable<Doc<A>>): Doc<A> = concatWith(docs) { x, y -> x + softline + y }
-fun <A> fillSep(docs: Sequence<Doc<A>>): Doc<A> = concatWith(docs) { x, y -> x + softline + y }
+fun <A> fillSep(docs: Iterable<Doc<A>>): Doc<A> = concatWith(docs) { x, y -> x cat softline cat y }
+fun <A> fillSep(docs: Sequence<Doc<A>>): Doc<A> = concatWith(docs) { x, y -> x cat softline cat y }
 
 /**
  * `sep xs` tries laying out the documents `xs` separated with [space]s,
@@ -823,7 +864,7 @@ fun <A> sep(docs: Sequence<Doc<A>>): Doc<A> = group(vsep(docs))
 
 /**
 
- * | `([hcat] xs)` concatenates all documents `xs` horizontally with `'<>'`
+ * `([hcat] xs)` concatenates all documents `xs` horizontally with `'<>'`
  * (i.e. without any spacing).
  *
  * It is provided only for consistency, since it is identical to [mconcat].
@@ -831,14 +872,12 @@ fun <A> sep(docs: Sequence<Doc<A>>): Doc<A> = group(vsep(docs))
  *     >>> let docs = Util.words "lorem ipsum dolor"
  *     >>> hcat docs
  *     loremipsumdolor
-hcat :: [Doc ann] -> Doc ann
-hcat = concatWith (<>)
  */
-fun <A> hcat(docs: Iterable<Doc<A>>): Doc<A> = concatWith(docs, Doc<A>::plus)
-fun <A> hcat(docs: Sequence<Doc<A>>): Doc<A> = concatWith(docs, Doc<A>::plus)
+fun <A> hcat(docs: Iterable<Doc<A>>): Doc<A> = concatWith(docs) { a, b -> a cat b }
+fun <A> hcat(docs: Sequence<Doc<A>>): Doc<A> = concatWith(docs) { a, b -> a cat b }
 
 /**
- * | `([vcat] xs)` vertically concatenates the documents `xs`. If it is
+ * `([vcat] xs)` vertically concatenates the documents `xs`. If it is
  * [group]ed, the line breaks are removed.
  *
  * In other words `[vcat]` is like `[vsep]`, with newlines removed instead of
@@ -855,8 +894,8 @@ fun <A> hcat(docs: Sequence<Doc<A>>): Doc<A> = concatWith(docs, Doc<A>::plus)
  * Since [group]ing a [vcat] is rather common, [cat] is a built-in shortcut for
  * it.
  */
-fun <A> vcat(docs: Iterable<Doc<A>>): Doc<A> = concatWith(docs) { a, b -> a + line_ + b }
-fun <A> vcat(docs: Sequence<Doc<A>>): Doc<A> = concatWith(docs) { a, b -> a + line_ + b }
+fun <A> vcat(docs: Iterable<Doc<A>>): Doc<A> = concatWith(docs) { a, b -> a cat line_ cat b }
+fun <A> vcat(docs: Sequence<Doc<A>>): Doc<A> = concatWith(docs) { a, b -> a cat line_ cat b }
 
 /**
  * `fillCat xs` concatenates documents `xs` horizontally with `'<>'` as
@@ -888,8 +927,8 @@ fun <A> vcat(docs: Sequence<Doc<A>>): Doc<A> = concatWith(docs) { a, b -> a + li
 fillCat :: [Doc ann] -> Doc ann
 fillCat = concatWith (\x y -> x <> softline' <> y)
  */
-fun <A> fillCat(docs: Iterable<Doc<A>>): Doc<A> = concatWith(docs) { x, y -> x + softline_ + y }
-fun <A> fillCat(docs: Sequence<Doc<A>>): Doc<A> = concatWith(docs) { x, y -> x + softline_ + y }
+fun <A> fillCat(docs: Iterable<Doc<A>>): Doc<A> = concatWith(docs) { x, y -> x cat softline_ cat y }
+fun <A> fillCat(docs: Sequence<Doc<A>>): Doc<A> = concatWith(docs) { x, y -> x cat softline_ cat y }
 
 /**
  * `cat xs` tries laying out the documents `xs` separated with nothing,
@@ -911,8 +950,6 @@ fun <A> fillCat(docs: Sequence<Doc<A>>): Doc<A> = concatWith(docs) { x, y -> x +
  * ```
  * [cat] = [group] . [vcat]
  * ```
-cat :: [Doc ann] -> Doc ann
-cat = group . vcat
  */
 fun <A> cat(docs: Iterable<Doc<A>>): Doc<A> = group(vcat(docs))
 fun <A> cat(docs: Sequence<Doc<A>>): Doc<A> = group(vcat(docs))
@@ -934,20 +971,22 @@ fun <A> cat(docs: Sequence<Doc<A>>): Doc<A> = group(vcat(docs))
  *     sit,
  *     amet
  *
- * If you want put the commas in front of their elements instead of at the end,
+ * If you want to put the commas in front of their elements instead of at the end,
  * you should use [tupled] or, in general, [encloseSep].
-punctuate
-:: Doc ann  * ^ Punctuation, e.g. [prettyprinter.symbols.comma]
--> [Doc ann]
--> [Doc ann]
-punctuate p = go
-where
-go []     = []
-go \[d]    = \[d]
-go (d:ds) = (d <> p) : go ds
  */
-fun <A> punctuate(pun: Doc<A>, docs: Iterable<Doc<A>>): Iterable<Doc<A>> = mapAllExceptLast(docs) { it + pun }
-fun <A> punctuate(pun: Doc<A>, docs: Sequence<Doc<A>>): Sequence<Doc<A>> = mapAllExceptLast(docs) { it + pun }
+fun <A> punctuate(pun: Doc<A>, docs: Iterable<Doc<A>>): Iterable<Doc<A>> = docs.mapWhere { where, doc: Doc<A> ->
+    when (where) {
+        Where.LAST -> doc
+        else -> doc cat pun
+    }
+}
+
+fun <A> punctuate(pun: Doc<A>, docs: Sequence<Doc<A>>): Sequence<Doc<A>> = docs.mapWhere { where, doc: Doc<A> ->
+    when (where) {
+        Where.LAST -> doc
+        else -> doc cat pun
+    }
+}
 
 /**
  * Layout a document depending on which column it starts at. [align] is
@@ -965,7 +1004,7 @@ fun <A> punctuate(pun: Doc<A>, docs: Sequence<Doc<A>>): Sequence<Doc<A>> = mapAl
 fun <A> column(react: (Int) -> Doc<A>): Doc<A> = Doc.Column(react)
 
 /**
- * | Layout a document depending on the current [nest]ing level. [align] is
+ * Layout a document depending on the current [nest]ing level. [align] is
  * implemented in terms of [nesting].
  *
  *     >>> let doc = "prefix" <+> nesting (\l -> brackets ("Nested:" <+> pretty l))
@@ -989,7 +1028,7 @@ fun <A> nesting(react: (Int) -> Doc<A>): Doc<A> = Doc.Nesting(react)
  *          *-] <- width: 8
  */
 fun <A> width(doc: Doc<A>, react: (Int) -> Doc<A>): Doc<A> =
-    column { colStart -> doc + column { colEnd -> react(colEnd - colStart) } }
+    column { colStart -> doc cat column { colEnd -> react(colEnd - colStart) } }
 
 /**
  * Layout a document depending on the page width, if one has been specified.
@@ -1004,7 +1043,7 @@ fun <A> width(doc: Doc<A>, react: (Int) -> Doc<A>): Doc<A> =
 fun <A> pageWidth(react: (PageWidth) -> Doc<A>): Doc<A> = Doc.WithPageWidth(react)
 
 /**
- *  * | `([fill] i x)` lays out the document `x`. It then appends `space`s until
+ * `([fill] i x)` lays out the document `x`. It then appends `space`s until
  * the width is equal to `i`. If the width of `x` is already larger, nothing is
  * appended.
  *
@@ -1067,10 +1106,12 @@ fun charTimes(c: Char, n: Int): DocNo = when {
  * `plural n one many` is `one` if `n` is `1`, and `many` otherwise. A
  * typical use case is  adding a plural "s".
  *
- *     >>> let things = \[True]
- *     >>> let amount = length things
- *     >>> pretty things <+> "has" <+> pretty amount <+> plural "entry" "entries" amount
- *     \[True] has 1 entry
+ * ```
+ * >>> let things = [True]
+ * >>> let amount = length things
+ * >>> pretty things <+> "has" <+> pretty amount <+> plural "entry" "entries" amount
+ * [True] has 1 entry
+ * ```
  */
 fun <X> plural(one: X, multiple: X, num: Int): X = when (num) {
     1 -> one
@@ -1088,7 +1129,7 @@ fun <X> plural(one: X, multiple: X, num: Int): X = when (num) {
  * [enclose] l r x = l '<>' x '<>' r
  * ```
  */
-fun <A> enclose(left: Doc<A>, right: Doc<A>, doc: Doc<A>): Doc<A> = left + doc + right
+fun <A> enclose(left: Doc<A>, right: Doc<A>, doc: Doc<A>): Doc<A> = left cat doc cat right
 
 /**
  * `([surround] x l r)` surrounds document `x` with `l` and `r`.
@@ -1102,10 +1143,10 @@ fun <A> enclose(left: Doc<A>, right: Doc<A>, doc: Doc<A>): Doc<A> = left + doc +
  *     >>> concatWith (surround dot) ["Prettyprinter", "Render", "Text"]
  *     Prettyprinter.Render.Text
  */
-fun <A> surround(doc: Doc<A>, left: Doc<A>, right: Doc<A>): Doc<A> = left + doc + right
+fun <A> surround(doc: Doc<A>, left: Doc<A>, right: Doc<A>): Doc<A> = left cat doc cat right
 
 /**
- * | Add an annotation to a `[Doc]`. This annotation can then be used by the
+ * Add an annotation to a `[Doc]`. This annotation can then be used by the
  * renderer to e.g. add color to certain parts of the output. For a full
  * tutorial example on how to use it, see the
  * "Prettyprinter.Render.Tutorials.StackMachineTutorial" or
@@ -1119,7 +1160,7 @@ fun <A> surround(doc: Doc<A>, left: Doc<A>, right: Doc<A>): Doc<A> = left + doc 
 fun <A> annotate(ann: A, doc: Doc<A>): Doc<A> = Doc.Annotated(ann, doc)
 
 /**
- * | Remove all annotations.
+ * Remove all annotations.
  *
  * Although [unAnnotate] is idempotent with respect to rendering,
  *
@@ -1413,7 +1454,7 @@ sealed class PageWidth {
      */
     class AvailablePerLine(val lineLength: Int, val ribbonFraction: Double) : PageWidth() {
         init {
-            require(lineLength > 0) { "chars available per line must be positive" }
+            require(lineLength >= 0) { "chars available per line must be positive" }
             require(ribbonFraction in 0.0..1.0) { "ribbon must be between 0 and 1; 0.4 to 1 is typical" }
         }
     }
@@ -1450,7 +1491,7 @@ data class LayoutOptions(val layoutPageWidth: PageWidth) {
 }
 
 /**
- * | This is the default layout algorithm, and it is used by `show`, [putDoc]
+ * This is the default layout algorithm, and it is used by `show`, [putDoc]
  * and `hPutDoc`. (Port note: see [AppendableSink])
  *
  * `[layoutPretty]` commits to rendering something in a certain way if the next
@@ -1485,7 +1526,7 @@ fun <A> layoutPretty(opts: LayoutOptions, doc: Doc<A>): SDS<A> {
 }
 
 /**
- * | A layout algorithm with more lookahead than [layoutPretty], that introduces
+ * A layout algorithm with more lookahead than [layoutPretty], that introduces
  * line breaks earlier if the content does not (or will not, rather) fit into
  * one line.
  *
@@ -1547,7 +1588,7 @@ fun <A> layoutPretty(opts: LayoutOptions, doc: Doc<A>): SDS<A> {
  * By contrast, [layoutSmart] stops only once it reaches line 4, where the `B`
  * has the same indentation as the first `A`.
  */
-fun <A> layoutSmart(opts: LayoutOptions, doc: Doc<A>): SDS<A> = when(val pw = opts.layoutPageWidth) {
+fun <A> layoutSmart(opts: LayoutOptions, doc: Doc<A>): SDS<A> = when (val pw = opts.layoutPageWidth) {
     is PageWidth.AvailablePerLine -> {
         fun fits(lineIndent: Int, currentColumn: Int, initialIndentY: Int?, sds: SDS<A>): Boolean {
             val minNestingLevel = min(currentColumn, initialIndentY ?: currentColumn)
@@ -1659,7 +1700,7 @@ fun <A> layoutWadlerLeijen(pageWidth: PageWidth, doc: Doc<A>, pred: FittingPredi
 }
 
 /**
- * | `([layoutCompact] x)` lays out the document `x` without adding any
+ * `([layoutCompact] x)` lays out the document `x` without adding any
  * indentation and without preserving annotations.
  * Since no _pretty_ printing is involved, this layouter is very
  * fast. The resulting output contains fewer characters than a prettyprinted
@@ -1680,9 +1721,9 @@ fun <A> layoutWadlerLeijen(pageWidth: PageWidth, doc: Doc<A>, pred: FittingPredi
  *     sit
  */
 fun <A> layoutCompact(doc: Doc<A>): SDS<A> {
-    fun scan(col: Int, docs: CList<Doc<A>>): SDS<A> = when(docs) {
+    fun scan(col: Int, docs: CList<Doc<A>>): SDS<A> = when (docs) {
         is CList.Nil -> SDS.SEmpty
-        is CList.Cons -> when(val d = docs.head) {
+        is CList.Cons -> when (val d = docs.head) {
             Doc.Fail -> SDS.SFail
             Doc.Empty -> SDS.SEmpty
             is Doc.Char -> SDS.SChar(d.char, scan(col + 1, docs.tail))
