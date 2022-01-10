@@ -79,36 +79,21 @@ fun <A> putDoc(doc: Doc<A>, app: Appendable) {
 
 /**
  * A [CharSequence] of a repeating character. Mostly useful for indentation.
+ *
+ * Port note: see [charTimes] notes. To repeat a codepoint outside the BMP, use [repeatText].
  */
-fun repeatChar(c: Char, n: Int): CharSequence = when {
-    n <= 0 -> ""
-    else -> object : ComputedCharSequence() {
-        override val length: Int = n
-        override fun get(index: Int): Char = c
-        override fun subSequence(startIndex: Int, endIndex: Int): CharSequence = repeatChar(c, endIndex - startIndex)
-    }
+fun repeatChar(char: Char, num: Int): CharSequence {
+    require(!char.isSurrogate()) { "$char is a surrogate, which isn't allowed in repeatChar" }
+    return CharArray(num) { char }.concatToString()
 }
 
 /**
  * Repeats a [CharSequence], and handles subsequences nicely.
  */
-fun repeatText(cs: CharSequence, n: Int): CharSequence = repeatText(cs, 0, cs.length * n)
-
-/**
- * Suppose the sequence repeats endlessly; `repeatText("abc")` would mean that
- * 0 = a, 1 = b, 2 = c, 3 = a, 4 = b, 5 = c, etc
- * This is then the subsequence of that repetition from `s` to `e`.
- */
-private fun repeatText(cs: CharSequence, s: Int, e: Int): CharSequence = when {
-    cs.isEmpty() -> ""
-    cs.length == 1 -> repeatChar(cs[0], e - s)
-    e - s <= 0 -> ""
-    else -> object : ComputedCharSequence() {
-        override val length: Int = e - s
-        override fun get(index: Int): Char = cs[(index + s) % cs.length]
-        override fun subSequence(startIndex: Int, endIndex: Int): CharSequence =
-            repeatText(cs, s + startIndex, s + endIndex)
-    }
+fun repeatText(cs: CharSequence, n: Int): CharSequence = if (n < 0) {
+    ""
+} else {
+    cs.repeat(n)
 }
 
 /**
@@ -119,7 +104,11 @@ fun <E> repeatThing(elem: E, n: Int): List<E> = when {
     n == 1 -> listOf(elem)
     else -> object : AbstractList<E>() {
         override val size: Int = n
-        override fun get(index: Int): E = elem
+        override fun get(index: Int): E = when (index) {
+            in 0 until n -> elem
+            else -> throw IndexOutOfBoundsException()
+        }
+
         override fun contains(element: E): Boolean {
             return elem == element
         }
@@ -131,11 +120,16 @@ fun <E> repeatThing(elem: E, n: Int): List<E> = when {
 }
 
 /**
+ * Counts codepoints by excluding all low surrogates. This counts each non-surrogate character and leading surrogate
+ * once.
+ */
+fun countCodepoints(cs: CharSequence): Int {
+    return cs.count { !it.isLowSurrogate() }
+}
+
+/**
  * Applies a position aware mapping function that knows when it's at the extremes of a list.
  */
-fun <E, F> Sequence<E>.mapWhere(func: (Where, E) -> F): Sequence<F> =
-    Sequence { this@mapWhere.iterator().mapWhere(func) }
-
 fun <E, F> Iterable<E>.mapWhere(func: (Where, E) -> F): Iterable<F> =
     Iterable { this@mapWhere.iterator().mapWhere(func) }
 
@@ -204,20 +198,5 @@ sealed class CList<out E> : Iterable<E> {
             }
         }
         return I(this)
-    }
-}
-
-/**
- *  It's not in the interface, but most consumers assume that at least [toString] works.
- *  We don't depend on equals / hashCode working.
- */
-private abstract class ComputedCharSequence : CharSequence {
-    override fun toString(): String {
-        val n = this.length
-        val ca = CharArray(n)
-        for (i in 0 until n) {
-            ca[i] = this[i]
-        }
-        return ca.concatToString()
     }
 }

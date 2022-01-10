@@ -24,22 +24,27 @@ sealed class Doc<out A> {
         override fun dump(): String = "Empty"
     }
 
-    /** An individual character.  */
-    internal class Char<A>(val char: kotlin.Char) : Doc<A>() {
+    /** An individual character. Effectively a synonym for Text. */
+    internal class Char<A>(char: kotlin.Char) : Doc<A>() {
+        val text: String = char.toString()
+        val length: Int
+            get() = 1
+
         init {
+            require(!char.isSurrogate()) { "Don't use surrogates in a Char, use text." }
             require(char != '\n') { "Doc.Char must not be newline; use Line" }
         }
 
-        override fun dump(): String = "Char($char)"
+        override fun dump(): String = "Char($text)"
     }
 
     /** Invariants exists because Text should never overlap Empty, Char or Line */
     internal class Text<A>(val text: CharSequence) : Doc<A>() {
-        val length: Int
-            get() = text.length
+        val length: Int = countCodepoints(text)
 
         init {
             require(length >= 2) { "Doc.Text must be at least 2 characters; use PChar or Empty" }
+            // TODO: remove the check for newlines
             require('\n' !in text) { "Doc.Text must not contain newline; use Line" }
         }
 
@@ -197,13 +202,13 @@ val emptyDoc: DocNo
 infix fun <A> Doc<A>.cat(right: Doc<A>): Doc<A> = Doc.Cat(this, right)
 
 fun <A> sconcat(docs: Iterable<Doc<A>>): Doc<A> = hcat(docs)
-fun <A> sconcat(docs: Sequence<Doc<A>>): Doc<A> = hcat(docs)
+fun <A> sconcat(vararg docs: Doc<A>): Doc<A> = hcat(*docs)
 fun <A> stimes(n: Int, doc: Doc<A>): Doc<A> = when {
     n <= 0 -> Doc.Empty
     n == 1 -> doc
     else -> when (doc) {
         Doc.Fail, Doc.Empty -> doc
-        is Doc.Char -> Doc.Text(repeatChar(doc.char, n))
+        is Doc.Char -> Doc.Text(repeatText(doc.text, n))
         is Doc.Text -> Doc.Text(repeatText(doc.text, n))
         else -> hcat(repeatThing(doc, n))
     }
@@ -214,13 +219,8 @@ val mempty: DocNo
     get() = Doc.Empty  // emptyDoc, but Haskell defines out of order.
 
 fun <A> mconcat(docs: Iterable<Doc<A>>): Doc<A> = hcat(docs)
-fun <A> mconcat(docs: Sequence<Doc<A>>): Doc<A> = hcat(docs)
+fun <A> mconcat(vararg docs: Doc<A>): Doc<A> = hcat(*docs)
 fun <A> mappend(left: Doc<A>, right: Doc<A>): Doc<A> = left cat right
-
-/**
- * Convert a string to a [Doc]ument, treating newlines as [hardline]s.
- */
-fun text(cs: CharSequence): DocNo = vsep(cs.splitToSequence('\n').map { unsafe(it) })
 
 private fun unsafe(cs: CharSequence): DocNo = when {
     cs.isEmpty() -> Doc.Empty
@@ -228,34 +228,82 @@ private fun unsafe(cs: CharSequence): DocNo = when {
     else -> Doc.Text(cs)
 }
 
-fun char(c: Char): DocNo = when (c) {
-    '\n' -> Doc.Line
+/**
+ * Convert a string to a [Doc]ument, treating newlines as [hardline]s.
+ *
+ * Port note: not in the source; the Haskell idiom is to use OverloadedStrings. But this is based on
+ * `instance Pretty Text where pretty = vsep . map unsafeTextWithoutNewlines . T.splitOn "\n"`
+ *
+ * TODO: add modes to give us finer grained control over newlines.
+ * @see [pretty] for our rough port of the Pretty typeclass.
+ * @see [texts] to create a quick list of text docs
+ * @see [words] for another way to create a list of text docs
+ * @see [reflow] to reflow a paragraph of text
+ */
+fun text(cs: CharSequence): DocNo = vsep(cs.split('\n').map { unsafe(it) })
+
+/**
+ * Encodes a single BMP character. To encode higher plane characters, use [text].
+ *
+ * @throws IllegalArgumentException if a surrogate character is passed.
+ *
+ * Port notes: There's a bit of a disconnect here. Kotlin is a 16-bit char language, while Haskell is a 32-bit char.
+ * As the support for individual characters doesn't add anything, and in Haskell it's abstracted away anyway,
+ * I'm going to keep the API simple by pushing that support into strings.
+ */
+fun char(c: Char): DocNo = when {
+    c == '\n' -> Doc.Line
+    c.isSurrogate() -> throw IllegalArgumentException("Can't create a doc from a surrogate; use `text`.")
     else -> Doc.Char(c)
 }
 
 /**
- * Prettyprinter sets up a whole typeclass for this.
- * Generally, you want more control.
+ * Helper for the Haskell rules for prettifying, especially Haskell's list style.
+ *
+ * This is reimplementing the Haskell style, except that booleans aren't capitalized. It's not meant to be complete,
+ * so it's simple and everything useful is public.
  */
-interface Prettier {
-    fun prettyList(e: Iterable<*>): DocNo = align(list(e.map { pretty(it) }))
-    fun pretty(e: Any?): DocNo
+fun prettyDefaultHelper(e: Any?): DocNo = when (e) {
+    is CharSequence -> pretty(e)
+    is Iterable<*> -> pretty(e, ::prettyDefaultHelper)
+    is Unit -> prettyUnit()
+    is Boolean -> pretty(e)
+    is Number -> pretty(e)
+    is Char -> pretty(e)
+    is Pair<*, *> -> pretty(e, ::prettyDefaultHelper)
+    is Triple<*, *, *> -> pretty(e, ::prettyDefaultHelper)
+    null -> prettyNull()
+    else -> text(e.toString())
 }
 
-/**
- * This is a straight port of some Haskell rules for prettifying, especially Haskell's list style.
- */
-object Haskell : Prettier {
-    override fun pretty(e: Any?): DocNo = when (e) {
-        is CharSequence -> text(e)
-        is Iterable<*> -> prettyList(e)
-        is Unit -> unsafe("()")
-        is Boolean, is Number -> unsafe(e.toString())
-        is Char -> char(e)
-        null -> unsafe("null")
-        else -> text(e.toString())
-    }
-}
+/** Pretty overload for strings; calls [text]. */
+fun pretty(e: CharSequence): DocNo = text(e)
+
+/** Pretty overload for iterables; creates an [align]ed [list]. You can provide your own helper. */
+fun <A> pretty(e: Iterable<*>, help: (Any?) -> Doc<A> = ::prettyDefaultHelper): Doc<A> = align(list(e.map(help)))
+
+/** Pretty function for Unit, treated as an empty tuple. */
+fun prettyUnit(): DocNo = unsafe("()")
+
+/** Pretty overload for booleans; uses Kotlin's toString. */
+fun pretty(e: Boolean): DocNo = unsafe(e.toString())
+
+/** Pretty overload for numbers; uses Kotlin's toString. */
+fun pretty(e: Number): DocNo = unsafe(e.toString())
+
+/** Pretty overload for BMP chars; uses [char]. */
+fun pretty(e: Char): DocNo = char(e)
+
+/** Pretty overload for [Pair]s; uses [tupled]. You can provide your own helper. */
+fun <A> pretty(e: Pair<*, *>, help: (Any?) -> Doc<A> = ::prettyDefaultHelper): Doc<A> =
+    tupled(help(e.first), help(e.second))
+
+/** Pretty overload for [Triple]s; uses [tupled]. You can provide your own helper. */
+fun <A> pretty(e: Triple<*, *, *>, help: (Any?) -> Doc<A> = ::prettyDefaultHelper): Doc<A> =
+    tupled(help(e.first), help(e.second), help(e.third))
+
+/** Pretty function for null, just the word `null`. */
+fun prettyNull(): DocNo = unsafe("null")
 
 /**
  * `nest i x` lays out the document `x` with the current nesting level
@@ -650,7 +698,7 @@ fun <A> encloseSep(leftDelim: Doc<A>, rightDelim: Doc<A>, separator: Doc<A>, inp
     }
 }
 
-fun <A> encloseSep(leftDelim: Doc<A>, rightDelim: Doc<A>, separator: Doc<A>, inputs: Sequence<Doc<A>>): Doc<A> =
+fun <A> encloseSep(leftDelim: Doc<A>, rightDelim: Doc<A>, separator: Doc<A>, vararg inputs: Doc<A>): Doc<A> =
     encloseSep(leftDelim, rightDelim, separator, inputs.asIterable())
 
 /**
@@ -678,13 +726,13 @@ fun <A> list(docs: Iterable<Doc<A>>): Doc<A> =
         )
     )
 
-fun <A> list(docs: Sequence<Doc<A>>): Doc<A> =
+fun <A> list(vararg docs: Doc<A>): Doc<A> =
     group(
         encloseSep(
             flatAlt(Doc.lbracketSpace, Doc.lbracket),
             flatAlt(Doc.rbracketSpace, Doc.rbracket),
             Doc.commaSpace,
-            docs
+            *docs
         )
     )
 
@@ -708,8 +756,8 @@ fun <A> list(docs: Sequence<Doc<A>>): Doc<A> =
 fun <A> tupled(docs: Iterable<Doc<A>>): Doc<A> =
     group(encloseSep(flatAlt(Doc.lparenSpace, Doc.lparen), flatAlt(Doc.rparenSpace, Doc.rparen), Doc.commaSpace, docs))
 
-fun <A> tupled(docs: Sequence<Doc<A>>): Doc<A> =
-    group(encloseSep(flatAlt(Doc.lparenSpace, Doc.lparen), flatAlt(Doc.rparenSpace, Doc.rparen), Doc.commaSpace, docs))
+fun <A> tupled(vararg docs: Doc<A>): Doc<A> =
+    group(encloseSep(flatAlt(Doc.lparenSpace, Doc.lparen), flatAlt(Doc.rparenSpace, Doc.rparen), Doc.commaSpace, *docs))
 
 /**
  * `x <+> y` concatenates document `x` and `y` with a `space` in
@@ -746,7 +794,8 @@ infix fun <A> Doc<A>.spc(right: Doc<A>): Doc<A> = this cat Doc.space cat right
  *     Prettyprinter.Render.Text
  */
 fun <A> concatWith(docs: Iterable<Doc<A>>, func: (Doc<A>, Doc<A>) -> Doc<A>): Doc<A> = concatWith(docs.iterator(), func)
-fun <A> concatWith(docs: Sequence<Doc<A>>, func: (Doc<A>, Doc<A>) -> Doc<A>): Doc<A> = concatWith(docs.iterator(), func)
+fun <A> concatWith(docs: Array<out Doc<A>>, func: (Doc<A>, Doc<A>) -> Doc<A>): Doc<A> =
+    concatWith(docs.iterator(), func)
 
 private fun <A> concatWith(iter: Iterator<Doc<A>>, func: (Doc<A>, Doc<A>) -> Doc<A>): Doc<A> {
     if (!iter.hasNext())
@@ -776,7 +825,7 @@ private fun <A> concatWith(iter: Iterator<Doc<A>>, func: (Doc<A>, Doc<A>) -> Doc
  * For automatic line breaks, consider using [fillSep] instead.
  */
 fun <A> hsep(docs: Iterable<Doc<A>>): Doc<A> = concatWith(docs) { a, b -> a spc b }
-fun <A> hsep(docs: Sequence<Doc<A>>): Doc<A> = concatWith(docs) { a, b -> a spc b }
+fun <A> hsep(vararg docs: Doc<A>): Doc<A> = concatWith(docs) { a, b -> a spc b }
 
 /**
  * `vsep xs` concatenates all documents `xs` above each other. If a
@@ -808,7 +857,7 @@ fun <A> hsep(docs: Sequence<Doc<A>>): Doc<A> = concatWith(docs) { a, b -> a spc 
  * that.
  */
 fun <A> vsep(docs: Iterable<Doc<A>>): Doc<A> = concatWith(docs) { x, y -> x cat line cat y }
-fun <A> vsep(docs: Sequence<Doc<A>>): Doc<A> = concatWith(docs) { x, y -> x cat line cat y }
+fun <A> vsep(vararg docs: Doc<A>): Doc<A> = concatWith(docs) { x, y -> x cat line cat y }
 
 
 /**
@@ -835,7 +884,7 @@ fillSep :: [Doc ann] -> Doc ann
 fillSep = concatWith (\x y -> x <> softline <> y)
  */
 fun <A> fillSep(docs: Iterable<Doc<A>>): Doc<A> = concatWith(docs) { x, y -> x cat softline cat y }
-fun <A> fillSep(docs: Sequence<Doc<A>>): Doc<A> = concatWith(docs) { x, y -> x cat softline cat y }
+fun <A> fillSep(vararg docs: Doc<A>): Doc<A> = concatWith(docs) { x, y -> x cat softline cat y }
 
 /**
  * `sep xs` tries laying out the documents `xs` separated with [space]s,
@@ -860,7 +909,7 @@ fun <A> fillSep(docs: Sequence<Doc<A>>): Doc<A> = concatWith(docs) { x, y -> x c
  * ```
  */
 fun <A> sep(docs: Iterable<Doc<A>>): Doc<A> = group(vsep(docs))
-fun <A> sep(docs: Sequence<Doc<A>>): Doc<A> = group(vsep(docs))
+fun <A> sep(vararg docs: Doc<A>): Doc<A> = group(vsep(*docs))
 
 /**
 
@@ -874,7 +923,7 @@ fun <A> sep(docs: Sequence<Doc<A>>): Doc<A> = group(vsep(docs))
  *     loremipsumdolor
  */
 fun <A> hcat(docs: Iterable<Doc<A>>): Doc<A> = concatWith(docs) { a, b -> a cat b }
-fun <A> hcat(docs: Sequence<Doc<A>>): Doc<A> = concatWith(docs) { a, b -> a cat b }
+fun <A> hcat(vararg docs: Doc<A>): Doc<A> = concatWith(docs) { a, b -> a cat b }
 
 /**
  * `([vcat] xs)` vertically concatenates the documents `xs`. If it is
@@ -895,7 +944,7 @@ fun <A> hcat(docs: Sequence<Doc<A>>): Doc<A> = concatWith(docs) { a, b -> a cat 
  * it.
  */
 fun <A> vcat(docs: Iterable<Doc<A>>): Doc<A> = concatWith(docs) { a, b -> a cat line_ cat b }
-fun <A> vcat(docs: Sequence<Doc<A>>): Doc<A> = concatWith(docs) { a, b -> a cat line_ cat b }
+fun <A> vcat(vararg docs: Doc<A>): Doc<A> = concatWith(docs) { a, b -> a cat line_ cat b }
 
 /**
  * `fillCat xs` concatenates documents `xs` horizontally with `'<>'` as
@@ -928,7 +977,7 @@ fillCat :: [Doc ann] -> Doc ann
 fillCat = concatWith (\x y -> x <> softline' <> y)
  */
 fun <A> fillCat(docs: Iterable<Doc<A>>): Doc<A> = concatWith(docs) { x, y -> x cat softline_ cat y }
-fun <A> fillCat(docs: Sequence<Doc<A>>): Doc<A> = concatWith(docs) { x, y -> x cat softline_ cat y }
+fun <A> fillCat(vararg docs: Doc<A>): Doc<A> = concatWith(docs) { x, y -> x cat softline_ cat y }
 
 /**
  * `cat xs` tries laying out the documents `xs` separated with nothing,
@@ -952,7 +1001,7 @@ fun <A> fillCat(docs: Sequence<Doc<A>>): Doc<A> = concatWith(docs) { x, y -> x c
  * ```
  */
 fun <A> cat(docs: Iterable<Doc<A>>): Doc<A> = group(vcat(docs))
-fun <A> cat(docs: Sequence<Doc<A>>): Doc<A> = group(vcat(docs))
+fun <A> cat(vararg docs: Doc<A>): Doc<A> = group(vcat(*docs))
 
 /**
  * `punctuate p xs` appends `p` to all but the last document in `xs`.
@@ -981,12 +1030,7 @@ fun <A> punctuate(pun: Doc<A>, docs: Iterable<Doc<A>>): Iterable<Doc<A>> = docs.
     }
 }
 
-fun <A> punctuate(pun: Doc<A>, docs: Sequence<Doc<A>>): Sequence<Doc<A>> = docs.mapWhere { where, doc: Doc<A> ->
-    when (where) {
-        Where.LAST -> doc
-        else -> doc cat pun
-    }
-}
+fun <A> punctuate(pun: Doc<A>, vararg docs: Doc<A>): Iterable<Doc<A>> = punctuate(pun, *docs)
 
 /**
  * Layout a document depending on which column it starts at. [align] is
@@ -1103,6 +1147,14 @@ fun charTimes(c: Char, n: Int): DocNo = when {
 }
 
 /**
+ * Repeat an arbitrary string.
+ *
+ * Port note: See notes on [char]; this also provides the functionality of repeating an abritrary
+ * codepoint that's missing from charTimes.
+ */
+fun textTimes(s: CharSequence, n: Int): DocNo = text(repeatText(s, n))
+
+/**
  * `plural n one many` is `one` if `n` is `1`, and `many` otherwise. A
  * typical use case is  adding a plural "s".
  *
@@ -1206,13 +1258,10 @@ fun <A, B> reAnnotate(doc: Doc<A>, alter: (A) -> B): Doc<B> = alterAnnotations(d
  * rendered due to other layouts fitting better, it is preferrable to reannotate
  * after producing the layout by using `[SDS.alterAnnotations]`.
  */
+@Suppress("UNCHECKED_CAST")
 fun <A, B> alterAnnotations(doc: Doc<A>, re: (A) -> Iterable<B>): Doc<B> {
     fun go(d: Doc<A>): Doc<B> = when (d) {
-        Doc.Empty -> Doc.Empty
-        Doc.Fail -> Doc.Fail
-        Doc.Line -> Doc.Line
-        is Doc.Char -> Doc.Char(d.char)
-        is Doc.Text -> Doc.Text(d.text)
+        Doc.Empty, Doc.Fail, Doc.Line, is Doc.Char, is Doc.Text -> d as Doc<B>
         is Doc.FlatAlt -> Doc.FlatAlt(go(d.first), go(d.second))
         is Doc.Cat -> Doc.Cat(go(d.first), go(d.second))
         is Doc.Nest -> Doc.Nest(d.indent, go(d.doc))
@@ -1244,10 +1293,14 @@ fun <A, B> alterAnnotations(doc: Doc<A>, re: (A) -> Iterable<B>): Doc<B> {
 sealed class SDS<out A> {
     internal object SFail : SDS<Nothing>()
     internal object SEmpty : SDS<Nothing>()
-    internal class SChar<A>(val char: Char, val rest: SDS<A>) : SDS<A>()
+    internal class SChar<A>(val text: CharSequence, val rest: SDS<A>) : SDS<A>() {
+        constructor(char: Char, rest: SDS<A>) : this(char.toString(), rest)
+
+        val length: Int = countCodepoints(text)
+    }
+
     internal class SText<A>(val text: CharSequence, val rest: SDS<A>) : SDS<A>() {
-        val length: Int
-            get() = text.length
+        val length: Int = countCodepoints(text)
     }
 
     internal class SLine<A>(val indent: Int, val rest: SDS<A>) : SDS<A>()
@@ -1261,7 +1314,7 @@ sealed class SDS<out A> {
         fun go(sds: SDS<A>): SDS<Nothing> = when (sds) {
             SEmpty -> SEmpty
             SFail -> SFail
-            is SChar -> SChar(sds.char, go(sds.rest))
+            is SChar -> SChar(sds.text, go(sds.rest))
             is SText -> SText(sds.text, go(sds.rest))
             is SLine -> SLine(sds.indent, go(sds.rest))
             is SAnnPop -> go(sds.rest)
@@ -1277,7 +1330,7 @@ sealed class SDS<out A> {
         fun go(sds: SDS<A>): SDS<B> = when (sds) {
             SEmpty -> SEmpty
             SFail -> SFail
-            is SChar -> SChar(sds.char, go(sds.rest))
+            is SChar -> SChar(sds.text, go(sds.rest))
             is SText -> SText(sds.text, go(sds.rest))
             is SLine -> SLine(sds.indent, go(sds.rest))
             is SAnnPop -> SAnnPop(go(sds.rest))
@@ -1302,7 +1355,7 @@ sealed class SDS<out A> {
         fun go(stack: CList<Removal>, sds: SDS<A>): SDS<B> = when (sds) {
             SFail -> SFail
             SEmpty -> SEmpty
-            is SChar -> SChar(sds.char, go(stack, sds.rest))
+            is SChar -> SChar(sds.text, go(stack, sds.rest))
             is SText -> SText(sds.text, go(stack, sds.rest))
             is SLine -> SLine(sds.indent, go(stack, sds.rest))
             is SAnnPush -> when (val a = re(sds.ann)) {
@@ -1331,12 +1384,10 @@ sealed class SDS<out A> {
     }
 
     fun removeTrailingWhitespace(): SDS<A> {
-        fun prependEmptyLines(ix: CList<Int>, sds0: SDS<A>): SDS<A> {
-            return foldr(sds0, ix) { _, sds -> SLine(0, sds) }
-        }
+        fun prependEmptyLines(ix: CList<Int>, sds0: SDS<A>): SDS<A> = foldr(sds0, ix) { _, sds -> SLine(0, sds) }
 
-        fun commitWhitespace(withheldLines: CList<Int>, withheldSpaces: Int, sds: SDS<A>): SDS<A> {
-            return when (withheldLines) {
+        fun commitWhitespace(withheldLines: CList<Int>, withheldSpaces: Int, sds: SDS<A>): SDS<A> =
+            when (withheldLines) {
                 CList.Nil -> when (withheldSpaces) {
                     0 -> sds
                     1 -> SChar(' ', sds)
@@ -1344,13 +1395,12 @@ sealed class SDS<out A> {
                 }
                 is CList.Cons -> prependEmptyLines(withheldLines.tail, SLine(withheldLines.head + withheldSpaces, sds))
             }
-        }
 
         fun go(state: Wss, sds: SDS<A>): SDS<A> = when (state) {
             is Wss.AnnotationLevel -> when (sds) {
                 SFail -> SFail
                 SEmpty -> SEmpty
-                is SChar -> SChar(sds.char, go(state, sds.rest))
+                is SChar -> SChar(sds.text, go(state, sds.rest))
                 is SText -> SText(sds.text, go(state, sds.rest))
                 is SLine -> SLine(sds.indent, go(state, sds.rest))
                 is SAnnPush -> SAnnPush(sds.ann, go(state.plusOne(), sds.rest))
@@ -1362,12 +1412,12 @@ sealed class SDS<out A> {
             is Wss.RecordedWhitespace -> when (sds) {
                 SFail -> SFail
                 SEmpty -> prependEmptyLines(state.withheldLines, SEmpty)
-                is SChar -> when (sds.char) {
-                    ' ' -> go(Wss.RecordedWhitespace(state.withheldLines, state.withheldSpaces + 1), sds.rest)
+                is SChar -> when (sds.text) {
+                    " " -> go(Wss.RecordedWhitespace(state.withheldLines, state.withheldSpaces + 1), sds.rest)
                     else -> commitWhitespace(
                         state.withheldLines,
                         state.withheldSpaces,
-                        SChar(sds.char, go(Wss.RecordedWhitespace(CList.Nil, 0), sds.rest))
+                        SChar(sds.text, go(Wss.RecordedWhitespace(CList.Nil, 0), sds.rest))
                     )
                 }
                 is SText -> {
@@ -1670,7 +1720,7 @@ fun <A> layoutWadlerLeijen(pageWidth: PageWidth, doc: Doc<A>, pred: FittingPredi
         is Lpl.Cons -> when (val d = lpl.d) {
             Doc.Fail -> SDS.SFail
             Doc.Empty -> best(nl, cc, lpl.ds)
-            is Doc.Char -> SDS.SChar(d.char, best(nl, cc + 1, lpl.ds))
+            is Doc.Char -> SDS.SChar(d.text, best(nl, cc + d.length, lpl.ds))
             is Doc.Text -> SDS.SText(d.text, best(nl, cc + d.length, lpl.ds))
             Doc.Line -> {
                 val x = best(lpl.i, lpl.i, lpl.ds)
@@ -1726,7 +1776,7 @@ fun <A> layoutCompact(doc: Doc<A>): SDS<A> {
         is CList.Cons -> when (val d = docs.head) {
             Doc.Fail -> SDS.SFail
             Doc.Empty -> SDS.SEmpty
-            is Doc.Char -> SDS.SChar(d.char, scan(col + 1, docs.tail))
+            is Doc.Char -> SDS.SChar(d.text, scan(col + d.length, docs.tail))
             is Doc.Text -> SDS.SText(d.text, scan(col + d.length, docs.tail))
             is Doc.FlatAlt -> scan(col, CList.Cons(d.first, docs.tail))
             Doc.Line -> SDS.SLine(0, scan(0, docs.tail))

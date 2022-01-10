@@ -1,6 +1,5 @@
 package prettyprinter
 
-import prettyprinter.Haskell.pretty
 import prettyprinter.symbols.brackets
 import prettyprinter.symbols.comma
 import prettyprinter.symbols.dot
