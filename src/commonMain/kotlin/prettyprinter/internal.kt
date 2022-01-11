@@ -1293,30 +1293,41 @@ fun <A, B> alterAnnotations(doc: Doc<A>, re: (A) -> Iterable<B>): Doc<B> {
 sealed class SDS<out A> {
     internal object SFail : SDS<Nothing>()
     internal object SEmpty : SDS<Nothing>()
-    internal class SChar<A>(val text: CharSequence, val rest: SDS<A>) : SDS<A>() {
-        constructor(char: Char, rest: SDS<A>) : this(char.toString(), rest)
+    internal class SChar<A>(val text: CharSequence, rest: () -> SDS<A>) : SDS<A>() {
+        constructor(char: Char, rest: () -> SDS<A>) : this(char.toString(), rest)
 
+        val rest: SDS<A> by lazy(rest)
         val length: Int = countCodepoints(text)
     }
 
-    internal class SText<A>(val text: CharSequence, val rest: SDS<A>) : SDS<A>() {
+    internal class SText<A>(val text: CharSequence, rest: () -> SDS<A>) : SDS<A>() {
+        val rest: SDS<A> by lazy(rest)
         val length: Int = countCodepoints(text)
     }
 
-    internal class SLine<A>(val indent: Int, val rest: SDS<A>) : SDS<A>()
-    internal class SAnnPush<A>(val ann: A, val rest: SDS<A>) : SDS<A>()
-    internal class SAnnPop<A>(val rest: SDS<A>) : SDS<A>()
+    internal class SLine<A>(val indent: Int, rest: () -> SDS<A>) : SDS<A>() {
+        val rest: SDS<A> by lazy(rest)
+    }
+
+    internal class SAnnPush<A>(val ann: A, rest: () -> SDS<A>) : SDS<A>() {
+        val rest: SDS<A> by lazy(rest)
+    }
+
+    internal class SAnnPop<A>(rest: () -> SDS<A>) : SDS<A>() {
+        val rest: SDS<A> by lazy(rest)
+    }
 
     /**
      * Remove all annotations. [unAnnotate] for [SimpleDocStream].
      */
     fun unAnnotate(): SDS<Nothing> {
-        fun go(sds: SDS<A>): SDS<Nothing> = when (sds) {
+        @Suppress("NON_TAIL_RECURSIVE_CALL")
+        tailrec fun go(sds: SDS<A>): SDS<Nothing> = when (sds) {
             SEmpty -> SEmpty
             SFail -> SFail
-            is SChar -> SChar(sds.text, go(sds.rest))
-            is SText -> SText(sds.text, go(sds.rest))
-            is SLine -> SLine(sds.indent, go(sds.rest))
+            is SChar -> SChar(sds.text) { go(sds.rest) }
+            is SText -> SText(sds.text) { go(sds.rest) }
+            is SLine -> SLine(sds.indent) { go(sds.rest) }
             is SAnnPop -> go(sds.rest)
             is SAnnPush -> go(sds.rest)
         }
@@ -1330,11 +1341,11 @@ sealed class SDS<out A> {
         fun go(sds: SDS<A>): SDS<B> = when (sds) {
             SEmpty -> SEmpty
             SFail -> SFail
-            is SChar -> SChar(sds.text, go(sds.rest))
-            is SText -> SText(sds.text, go(sds.rest))
-            is SLine -> SLine(sds.indent, go(sds.rest))
-            is SAnnPop -> SAnnPop(go(sds.rest))
-            is SAnnPush -> SAnnPush(func(sds.ann), go(sds.rest))
+            is SChar -> SChar(sds.text) { go(sds.rest) }
+            is SText -> SText(sds.text) { go(sds.rest) }
+            is SLine -> SLine(sds.indent) { go(sds.rest) }
+            is SAnnPop -> SAnnPop { go(sds.rest) }
+            is SAnnPush -> SAnnPush(func(sds.ann)) { go(sds.rest) }
         }
         return go(this)
     }
@@ -1351,21 +1362,20 @@ sealed class SDS<out A> {
      * this flexibility again.)
      */
     fun <B> alterAnnotations(re: (A) -> B?): SDS<B> {
-
         fun go(stack: CList<Removal>, sds: SDS<A>): SDS<B> = when (sds) {
             SFail -> SFail
             SEmpty -> SEmpty
-            is SChar -> SChar(sds.text, go(stack, sds.rest))
-            is SText -> SText(sds.text, go(stack, sds.rest))
-            is SLine -> SLine(sds.indent, go(stack, sds.rest))
+            is SChar -> SChar(sds.text) { go(stack, sds.rest) }
+            is SText -> SText(sds.text) { go(stack, sds.rest) }
+            is SLine -> SLine(sds.indent) { go(stack, sds.rest) }
             is SAnnPush -> when (val a = re(sds.ann)) {
                 null -> go(CList.Cons(Removal.Remove, stack), sds.rest)
-                else -> SAnnPush(a, go(CList.Cons(Removal.DontRemove, stack), sds.rest))
+                else -> SAnnPush(a) { go(CList.Cons(Removal.DontRemove, stack), sds.rest) }
             }
             is SAnnPop -> when (stack) {
                 CList.Nil -> panicPeekedEmpty()
                 is CList.Cons -> when (stack.head) {
-                    Removal.DontRemove -> SAnnPop(go(stack.tail, sds.rest))
+                    Removal.DontRemove -> SAnnPop { go(stack.tail, sds.rest) }
                     Removal.Remove -> go(stack.tail, sds.rest)
                 }
             }
@@ -1384,29 +1394,31 @@ sealed class SDS<out A> {
     }
 
     fun removeTrailingWhitespace(): SDS<A> {
-        fun prependEmptyLines(ix: CList<Int>, sds0: SDS<A>): SDS<A> = foldr(sds0, ix) { _, sds -> SLine(0, sds) }
+        fun prependEmptyLines(ix: CList<Int>, sds0: SDS<A>): SDS<A> = foldr(sds0, ix) { _, sds -> SLine(0) { sds } }
 
         fun commitWhitespace(withheldLines: CList<Int>, withheldSpaces: Int, sds: SDS<A>): SDS<A> =
             when (withheldLines) {
                 CList.Nil -> when (withheldSpaces) {
                     0 -> sds
-                    1 -> SChar(' ', sds)
-                    else -> SText(repeatChar(' ', withheldSpaces), sds)
+                    1 -> SChar(' ') { sds }
+                    else -> SText(repeatChar(' ', withheldSpaces)) { sds }
                 }
-                is CList.Cons -> prependEmptyLines(withheldLines.tail, SLine(withheldLines.head + withheldSpaces, sds))
+                is CList.Cons -> prependEmptyLines(withheldLines.tail, SLine(
+                    withheldLines.head + withheldSpaces
+                ) { sds })
             }
 
         fun go(state: Wss, sds: SDS<A>): SDS<A> = when (state) {
             is Wss.AnnotationLevel -> when (sds) {
                 SFail -> SFail
                 SEmpty -> SEmpty
-                is SChar -> SChar(sds.text, go(state, sds.rest))
-                is SText -> SText(sds.text, go(state, sds.rest))
-                is SLine -> SLine(sds.indent, go(state, sds.rest))
-                is SAnnPush -> SAnnPush(sds.ann, go(state.plusOne(), sds.rest))
+                is SChar -> SChar(sds.text) { go(state, sds.rest) }
+                is SText -> SText(sds.text) { go(state, sds.rest) }
+                is SLine -> SLine(sds.indent) { go(state, sds.rest) }
+                is SAnnPush -> SAnnPush(sds.ann) { go(state.plusOne(), sds.rest) }
                 is SAnnPop -> when {
-                    state.annLvl > 1 -> SAnnPop(go(state.plusOne(), sds.rest))
-                    else -> SAnnPop(go(Wss.RecordedWhitespace(CList.Nil, 0), sds.rest))
+                    state.annLvl > 1 -> SAnnPop { go(state.plusOne(), sds.rest) }
+                    else -> SAnnPop { go(Wss.RecordedWhitespace(CList.Nil, 0), sds.rest) }
                 }
             }
             is Wss.RecordedWhitespace -> when (sds) {
@@ -1417,7 +1429,7 @@ sealed class SDS<out A> {
                     else -> commitWhitespace(
                         state.withheldLines,
                         state.withheldSpaces,
-                        SChar(sds.text, go(Wss.RecordedWhitespace(CList.Nil, 0), sds.rest))
+                        SChar(sds.text) { go(Wss.RecordedWhitespace(CList.Nil, 0), sds.rest) }
                     )
                 }
                 is SText -> {
@@ -1431,18 +1443,20 @@ sealed class SDS<out A> {
                         commitWhitespace(
                             state.withheldLines, state.withheldSpaces,
                             SText(
-                                stripped, go(
+                                stripped
+                            ) {
+                                go(
                                     Wss.RecordedWhitespace(CList.Nil, trailingLength),
                                     sds.rest
                                 )
-                            )
+                            }
                         )
                     }
                 }
                 is SLine -> go(Wss.RecordedWhitespace(CList.Cons(sds.indent, state.withheldLines), 0), sds.rest)
                 is SAnnPush -> commitWhitespace(
                     state.withheldLines, state.withheldSpaces,
-                    SAnnPush(sds.ann, go(Wss.AnnotationLevel(1), sds.rest))
+                    SAnnPush(sds.ann) { go(Wss.AnnotationLevel(1), sds.rest) }
                 )
                 is SAnnPop -> panicSkippingInUnannotated()
             }
@@ -1714,14 +1728,15 @@ fun <A> layoutWadlerLeijen(pageWidth: PageWidth, doc: Doc<A>, pred: FittingPredi
      * * cc: Current column, i.e. "where the cursor is"
      * * lpl: Documents remaining to be handled (in order)
      */
+    @Suppress("NON_TAIL_RECURSIVE_CALL")
     tailrec fun best(nl: Int, cc: Int, lpl: Lpl<A>): SDS<A> = when (lpl) {
         Lpl.Nil -> SDS.SEmpty
-        is Lpl.UndoAnn -> SDS.SAnnPop(best(nl, cc, lpl.ds))
+        is Lpl.UndoAnn -> SDS.SAnnPop { best(nl, cc, lpl.ds) }
         is Lpl.Cons -> when (val d = lpl.d) {
             Doc.Fail -> SDS.SFail
             Doc.Empty -> best(nl, cc, lpl.ds)
-            is Doc.Char -> SDS.SChar(d.text, best(nl, cc + d.length, lpl.ds))
-            is Doc.Text -> SDS.SText(d.text, best(nl, cc + d.length, lpl.ds))
+            is Doc.Char -> SDS.SChar(d.text) { best(nl, cc + d.length, lpl.ds) }
+            is Doc.Text -> SDS.SText(d.text) { best(nl, cc + d.length, lpl.ds) }
             Doc.Line -> {
                 val x = best(lpl.i, lpl.i, lpl.ds)
                 val iPrime = when (x) {
@@ -1729,7 +1744,7 @@ fun <A> layoutWadlerLeijen(pageWidth: PageWidth, doc: Doc<A>, pred: FittingPredi
                     is SDS.SLine -> 0
                     else -> lpl.i
                 }
-                SDS.SLine(iPrime, x)
+                SDS.SLine(iPrime) { x }
             }
             is Doc.FlatAlt -> best(nl, cc, Lpl.Cons(lpl.i, d.first, lpl.ds))
             is Doc.Cat -> best(nl, cc, Lpl.Cons(lpl.i, d.first, Lpl.Cons(lpl.i, d.second, lpl.ds)))
@@ -1742,7 +1757,7 @@ fun <A> layoutWadlerLeijen(pageWidth: PageWidth, doc: Doc<A>, pred: FittingPredi
             is Doc.Column -> best(nl, cc, Lpl.Cons(lpl.i, d.react(cc), lpl.ds))
             is Doc.WithPageWidth -> best(nl, cc, Lpl.Cons(lpl.i, d.react(pageWidth), lpl.ds))
             is Doc.Nesting -> best(nl, cc, Lpl.Cons(lpl.i, d.react(lpl.i), lpl.ds))
-            is Doc.Annotated -> SDS.SAnnPush(d.ann, best(nl, cc, Lpl.Cons(lpl.i, d.doc, Lpl.UndoAnn(lpl.ds))))
+            is Doc.Annotated -> SDS.SAnnPush(d.ann) { best(nl, cc, Lpl.Cons(lpl.i, d.doc, Lpl.UndoAnn(lpl.ds))) }
         }
     }
 
@@ -1771,15 +1786,16 @@ fun <A> layoutWadlerLeijen(pageWidth: PageWidth, doc: Doc<A>, pred: FittingPredi
  *     sit
  */
 fun <A> layoutCompact(doc: Doc<A>): SDS<A> {
+    @Suppress("NON_TAIL_RECURSIVE_CALL")
     tailrec fun scan(col: Int, docs: CList<Doc<A>>): SDS<A> = when (docs) {
         is CList.Nil -> SDS.SEmpty
         is CList.Cons -> when (val d = docs.head) {
             Doc.Fail -> SDS.SFail
             Doc.Empty -> SDS.SEmpty
-            is Doc.Char -> SDS.SChar(d.text, scan(col + d.length, docs.tail))
-            is Doc.Text -> SDS.SText(d.text, scan(col + d.length, docs.tail))
+            is Doc.Char -> SDS.SChar(d.text) { scan(col + d.length, docs.tail) }
+            is Doc.Text -> SDS.SText(d.text) { scan(col + d.length, docs.tail) }
             is Doc.FlatAlt -> scan(col, CList.Cons(d.first, docs.tail))
-            Doc.Line -> SDS.SLine(0, scan(0, docs.tail))
+            Doc.Line -> SDS.SLine(0) { scan(0, docs.tail) }
             is Doc.Cat -> scan(col, CList.Cons(d.first, CList.Cons(d.second, docs.tail)))
             is Doc.Nest -> scan(col, CList.Cons(d.doc, docs.tail))
             is Doc.Union -> scan(col, CList.Cons(d.second, docs.tail))
