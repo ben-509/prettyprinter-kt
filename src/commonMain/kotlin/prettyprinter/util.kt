@@ -13,12 +13,12 @@ package prettyprinter
  *     >>> putDoc ([tupled] (words "Lorem ipsum dolor"))
  *     (Lorem, ipsum, dolor)
  */
-fun words(text: String): List<DocNo> = text.split(' ').map { text(it) }
+fun words(text: String): List<DocNo> = text.split(' ').map(::text)
 
 /**
  * Create a list of Docs from strings.
  */
-fun texts(vararg text: String): List<DocNo> = text.map { text(it) }
+fun texts(vararg text: String): List<DocNo> = text.map(::text)
 
 /**
  * Insert soft linebreaks between words, so that text is broken into multiple

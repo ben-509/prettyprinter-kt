@@ -1551,7 +1551,7 @@ data class LayoutOptions(val layoutPageWidth: PageWidth) {
  * seem to run off to the right before having lots of line breaks.
  */
 fun <A> layoutPretty(opts: LayoutOptions, doc: Doc<A>): SDS<A> {
-    fun fits(width: Int, sds: SDS<A>): Boolean = if (width < 0) {
+    tailrec fun fits(width: Int, sds: SDS<A>): Boolean = if (width < 0) {
         false
     } else {
         when (sds) {
@@ -1666,7 +1666,7 @@ fun <A> layoutSmart(opts: LayoutOptions, doc: Doc<A>): SDS<A> = when (val pw = o
  */
 fun <A> layoutUnbounded(doc: Doc<A>): SDS<A> {
     fun failsOnFirstLine(sds: SDS<A>): Boolean {
-        fun go(sds: SDS<A>): Boolean = when (sds) {
+        tailrec fun go(sds: SDS<A>): Boolean = when (sds) {
             SDS.SFail -> true
             SDS.SEmpty -> false
             is SDS.SChar -> go(sds.rest)
@@ -1683,7 +1683,7 @@ fun <A> layoutUnbounded(doc: Doc<A>): SDS<A> {
 
 /** The Wadler/Leijen layout algorithm */
 fun <A> layoutWadlerLeijen(pageWidth: PageWidth, doc: Doc<A>, pred: FittingPredicate<A>): SDS<A> {
-    fun initialIndentation(sds: SDS<A>): Int? = when (sds) {
+    tailrec fun initialIndentation(sds: SDS<A>): Int? = when (sds) {
         is SDS.SLine -> sds.indent
         is SDS.SAnnPush -> initialIndentation(sds.rest)
         is SDS.SAnnPop -> initialIndentation(sds.rest)
@@ -1714,7 +1714,7 @@ fun <A> layoutWadlerLeijen(pageWidth: PageWidth, doc: Doc<A>, pred: FittingPredi
      * * cc: Current column, i.e. "where the cursor is"
      * * lpl: Documents remaining to be handled (in order)
      */
-    fun best(nl: Int, cc: Int, lpl: Lpl<A>): SDS<A> = when (lpl) {
+    tailrec fun best(nl: Int, cc: Int, lpl: Lpl<A>): SDS<A> = when (lpl) {
         Lpl.Nil -> SDS.SEmpty
         is Lpl.UndoAnn -> SDS.SAnnPop(best(nl, cc, lpl.ds))
         is Lpl.Cons -> when (val d = lpl.d) {
@@ -1771,7 +1771,7 @@ fun <A> layoutWadlerLeijen(pageWidth: PageWidth, doc: Doc<A>, pred: FittingPredi
  *     sit
  */
 fun <A> layoutCompact(doc: Doc<A>): SDS<A> {
-    fun scan(col: Int, docs: CList<Doc<A>>): SDS<A> = when (docs) {
+    tailrec fun scan(col: Int, docs: CList<Doc<A>>): SDS<A> = when (docs) {
         is CList.Nil -> SDS.SEmpty
         is CList.Cons -> when (val d = docs.head) {
             Doc.Fail -> SDS.SFail

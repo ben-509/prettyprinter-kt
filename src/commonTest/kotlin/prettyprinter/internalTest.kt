@@ -13,6 +13,8 @@ fun ll(vararg lines: String): String {
     return lines.joinToString("\n")
 }
 
+fun <E> List<E>.takeNCycle(take: Int): List<E> = List(take) { this[it % this.size] }
+
 /**
  * Any test labeled Dt is a doctest, find the associated function and the string >>> in the comments for the original
  * test and commentary.
@@ -22,11 +24,9 @@ class InternalTests {
     @Test
     fun nestDt1() {
         val actual: Doc<Nothing> = vsep(
-            listOf(
                 nest(4, vsep(texts("lorem", "ipsum", "dolor"))),
                 text("sit"),
                 text("amet")
-            )
         )
         val expected = ll(
             "lorem",
@@ -218,11 +218,9 @@ class InternalTests {
         assertEquals(ll("prefix text", "       to", "       lay", "       out"), actual.toStringPretty())
     }
 
-    private fun <E> List<E>.takeNCycle(take: Int): List<E> = List(take) { this[it % this.size] }
-
     @Test
     fun fillSepDt1() {
-        val docs = words("lorem ipsum dolor sit amet").toList().takeNCycle(20)
+        val docs = words("lorem ipsum dolor sit amet").takeNCycle(20)
         val actual = text("Docs:") spc fillSep(docs)
 
         assertEquals(
@@ -362,10 +360,8 @@ class InternalTests {
                     text(" * * *"),
                     indent(3, text(" *-")),
                     vsep(
-                        listOf(
-                            text(" *-"),
-                            indent(4, text(" *-"))
-                        )
+                        text(" *-"),
+                        indent(4, text(" *-"))
                     )
                 ).map(::annotate)
             )
