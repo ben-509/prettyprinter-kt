@@ -55,13 +55,13 @@ fun reflow(text: String): DocNo = fillSep(words(text))
  * Port note: our tests use [Doc.toStringPretty]. This also takes an [Appendable] rather than an IO stream.
  */
 fun <A> putDocW(w: Int, doc: Doc<A>, app: Appendable) {
-    val sds = layoutPretty(LayoutOptions(PageWidth.AvailablePerLine(w, 1.0)), doc)
+    val sds = layoutPretty(Opts(PageWidth.AvailablePerLine(w, 1.0)), doc)
     AppendableSink<A>(tgt = app).render(sds)
 }
 
 /**
  * `([putDoc] doc)` prettyprints document `doc` to standard output. Uses the
- * [LayoutOptions.default].
+ * [Opts.default].
  *
  *     >>> putDoc ("hello" <+> "world")
  *     hello world
@@ -73,7 +73,7 @@ fun <A> putDocW(w: Int, doc: Doc<A>, app: Appendable) {
  * Port note: our tests use [Doc.toStringPretty]. This also takes an [Appendable] rather than an IO stream.
  */
 fun <A> putDoc(doc: Doc<A>, app: Appendable) {
-    val sds = layoutPretty(LayoutOptions(PageWidth.default), doc)
+    val sds = layoutPretty(Opts(PageWidth.default), doc)
     AppendableSink<A>(tgt = app).render(sds)
 }
 

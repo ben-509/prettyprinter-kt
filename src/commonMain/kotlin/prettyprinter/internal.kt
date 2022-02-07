@@ -111,7 +111,7 @@ sealed class Doc<out A> {
 
     /**
      * Port note: selecting "pretty" per these comments on `instance Show`; this is important so that tests behave.
-     * `(show doc)` prettyprints document `doc` with [LayoutOptions.default],
+     * `(show doc)` prettyprints document `doc` with [Opts.default],
      * ignoring all annotations.
      * ```
      * instance Show (Doc ann) where
@@ -131,14 +131,14 @@ sealed class Doc<out A> {
 
     /** Replaces most uses of [putDoc] in tests. */
     fun toStringPretty(pw: PageWidth = PageWidth.default, showAnn: Boolean = true): String =
-        quickRender(showAnn, layoutPretty(LayoutOptions(pw), this))
+        quickRender(showAnn, layoutPretty(Opts(pw), this))
 
     /** Replaces most uses of [putDocW] in tests. */
     fun toStringPretty(width: Int, ribbon: Double = 1.0, showAnn: Boolean = true): String =
         toStringPretty(PageWidth.AvailablePerLine(width, ribbon), showAnn = showAnn)
 
     fun toStringSmart(pw: PageWidth = PageWidth.default, showAnn: Boolean = true): String =
-        quickRender(showAnn, layoutSmart(LayoutOptions(pw), this))
+        quickRender(showAnn, layoutSmart(Opts(pw), this))
 
     fun toStringSmart(width: Int, ribbon: Double = 1.0, showAnn: Boolean = true): String =
         toStringSmart(PageWidth.AvailablePerLine(width, ribbon), showAnn = showAnn)
@@ -1543,16 +1543,23 @@ internal fun remainingWidth(lineLength: Int, ribbonFraction: Double, lineIndent:
 }
 
 /** Options to influence the layout algorithms. */
-data class LayoutOptions(val layoutPageWidth: PageWidth) {
+data class Opts(val layoutPageWidth: PageWidth) {
     companion object {
         /**
          * The default layout options, suitable when you just want some output, and
          * don’t particularly care about the details. Used by the 'Show' instance, for
          * example.
          */
-        val default = LayoutOptions(PageWidth.default)
+        val default = Opts(PageWidth.default)
+        /** Selecting unbounded options. */
+        val unbounded = Opts(PageWidth.Unbounded)
+        /** Selecting a specific line length and ribbon. */
+        fun std(lineLength: Int, ribbonFraction: Double = 1.0) = Opts(PageWidth.AvailablePerLine(lineLength, ribbonFraction))
     }
 }
+
+typealias LayoutOptions = Opts
+
 
 /**
  * This is the default layout algorithm, and it is used by `show`, [putDoc]
@@ -1564,7 +1571,7 @@ data class LayoutOptions(val layoutPageWidth: PageWidth) {
  * smarter, but a bit less performant, `[layoutSmart]` algorithm if the results
  * seem to run off to the right before having lots of line breaks.
  */
-fun <A> layoutPretty(opts: LayoutOptions, doc: Doc<A>): SDS<A> {
+fun <A> layoutPretty(opts: Opts, doc: Doc<A>): SDS<A> {
     tailrec fun fits(width: Int, sds: SDS<A>): Boolean = if (width < 0) {
         false
     } else {
@@ -1652,7 +1659,7 @@ fun <A> layoutPretty(opts: LayoutOptions, doc: Doc<A>): SDS<A> {
  * By contrast, [layoutSmart] stops only once it reaches line 4, where the `B`
  * has the same indentation as the first `A`.
  */
-fun <A> layoutSmart(opts: LayoutOptions, doc: Doc<A>): SDS<A> = when (val pw = opts.layoutPageWidth) {
+fun <A> layoutSmart(opts: Opts, doc: Doc<A>): SDS<A> = when (val pw = opts.layoutPageWidth) {
     is PageWidth.AvailablePerLine -> {
         fun fits(lineIndent: Int, currentColumn: Int, initialIndentY: Int?, sds: SDS<A>): Boolean {
             val minNestingLevel = min(currentColumn, initialIndentY ?: currentColumn)
@@ -1791,7 +1798,7 @@ fun <A> layoutCompact(doc: Doc<A>): SDS<A> {
         is CList.Nil -> SDS.SEmpty
         is CList.Cons -> when (val d = docs.head) {
             Doc.Fail -> SDS.SFail
-            Doc.Empty -> SDS.SEmpty
+            Doc.Empty -> scan(col, docs.tail)
             is Doc.Char -> SDS.SChar(d.text) { scan(col + d.length, docs.tail) }
             is Doc.Text -> SDS.SText(d.text) { scan(col + d.length, docs.tail) }
             is Doc.FlatAlt -> scan(col, CList.Cons(d.first, docs.tail))

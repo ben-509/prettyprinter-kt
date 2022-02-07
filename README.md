@@ -1,6 +1,8 @@
 A modern Wadler/Leijen Prettyprinter
 ====================================
 
+**Kotlin notes**: This README is copied largely verbatim from the Haskell package.
+
 tl;dr
 -----
 
@@ -25,7 +27,8 @@ example :: Int
         -> IO ()
 ```
 
-**Kotlin notes**: The code to produce the same output; validated in [readmeTest]:
+**Kotlin notes**: No ANSI terminal backend, but a demo HTML backend is present.
+The code to produce the same output; validated in [readmeTest]:
 
 ```kotlin
 fun prettyType(items: List<String>): DocNo = align(sep(
@@ -72,6 +75,9 @@ all other uses, `Text` is what people should be using. The prettyprinter uses no
 `String` definitions anywhere; using a `String` means an immediate conversion to
 the internal `Text`-based format.
 
+**Kotlin notes**: This is not an issue in Kotlin. However, we don't have string 
+overloading, either, so you need `text("my string")`.
+
 
 
 ### Extensive documentation
@@ -107,6 +113,10 @@ extensive use of such a feature.
 Special care has been applied to make annotations unobtrusive, so that if you
 don’t need or care about them there is no overhead, neither in terms of
 usability nor performance.
+
+**Kotlin notes**: Kotlin's type inference isn't quite as good as Haskell's. When
+annotations are not required, we need to be a bit more explicit and specify 
+`Doc<Nothing>`. `DocNo` is an alias to make this convenient.
 
 
 
@@ -183,8 +193,8 @@ Some Haskellisms are replaced with Kotlinisms:
   * Differences in strings
     * While `Doc.Char` is preserved, it takes a one codepoint string.
     * Kotlin can't overload strings; the `text` function must be used.
-    * None of the machinery around `Text` is needed.
-    * Haven't ported `fuse`; will see if buffered IO mitigates.
+    * None of the machinery around packing and unpacking Text is needed.
+    * Haven't ported `fuse`; we'll see if buffered IO mitigates those issues.
   * Differences in syntax and idioms
     * Functional arguments are moved to the end.
     * The `<>` operator is replaced with the `cat` infix function.
