@@ -7,8 +7,8 @@ plugins {
     kotlin("multiplatform") version "1.6.10"
 }
 
-group = "me.ben"
-version = "1.0-SNAPSHOT"
+group = "systems.temper"
+version = "1.7.1"  // this should track the version of the original in hackage
 
 repositories {
     mavenCentral()

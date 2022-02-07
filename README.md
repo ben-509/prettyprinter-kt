@@ -1,7 +1,7 @@
 A modern Wadler/Leijen Prettyprinter
 ====================================
 
-**Kotlin notes**: This README is copied largely verbatim from the Haskell package.
+**Kotlin notes**: This README is copied largely verbatim from [the Haskell package][hackage].
 
 tl;dr
 -----
@@ -199,7 +199,7 @@ Some Haskellisms are replaced with Kotlinisms:
     * Functional arguments are moved to the end.
     * The `<>` operator is replaced with the `cat` infix function.
     * The `<+>` operator is replaced with the `spc` infix function.
-  * Some properties take blocks to mimic Haskell lazy evaluation.
+  * The `SDS.rest` properties take blocks to mimic lazy evaluation.
   * The `DocNo` type alias helps out Kotlin's type inference when you don't need annotations.
   * The `MapWhere` class handles a lot of "zip this infinite list with another offset by one" tricks
   * The doc tests are ordinary unit tests.
